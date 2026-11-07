@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard-container">
+    <!-- Header / Overview Banner -->
+    <div class="overview-card">
+        <div class="overview-info">
+            <h2 class="overview-title">AI Customer Refund Intake</h2>
+            <p class="overview-description">
+                Convert unstructured customer communications (emails, WhatsApp, SMS) into validated, structured refund records using Groq LLM with strict JSON schema enforcement.
+            </p>
+            <div class="reconciliation-meta-bar">
+                <span class="meta-tag">Model: {{ model_name }}</span>
+                <span class="meta-tag">Prompt: {{ prompt_version }}</span>
+                <span class="meta-tag">Triage Mode: Non-Authoritative</span>
+                {% if groq_configured %}
+                    <span class="meta-tag" style="background:#ecfdf5; color:#065f46; font-weight:600;">Groq API: Connected</span>
+                {% else %}
+                    <span class="meta-tag" style="background:#fff1f2; color:#9f1239; font-weight:600;">Groq API: Key Not Configured</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="overview-actions">
+            <a href="{{ url_for('intake_review_queue') }}" class="btn btn-secondary">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                    <circle cx="9" cy="7" r="4"/>
+                    <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                </svg>
+                <span>Review Queue ({{ stats.pending_review }})</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- Error Alert Banner -->
+    {% if error_message %}
+    <div class="alert-box alert-danger">
+        <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="8" x2="12" y2="12"/>
+            <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <div class="alert-content">
+            <strong>Intake Processing Notice:</strong> {{ error_message }}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Intake Grid: Form (Left) & Guidance / Examples (Right) -->
+    <div class="intake-grid">
+        <!-- Intake Form Card -->
+        <div class="records-card intake-form-card">
+            <div class="records-header">
+                <div>
+                    <h3 class="records-title">Customer Message Intake</h3>
+                    <p class="records-subtitle">Paste inbound customer communication to extract entities and triage</p>
+                </div>
+            </div>
+
+            <form action="{{ url_for('intake_submit_action') }}" method="POST" class="intake-form-body">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <div class="form-group">
+                    <label for="source_channel" class="form-label">Source Channel</label>
+                    <select id="source_channel" name="source_channel" class="filter-select" style="width: 220px;">
+                        <option value="Email" {% if selected_channel == 'Email' %}selected{% endif %}>Email</option>
+                        <option value="WhatsApp" {% if selected_channel == 'WhatsApp' %}selected{% endif %}>WhatsApp</option>
+                        <option value="Manual" {% if selected_channel == 'Manual' %}selected{% endif %}>Manual / Desk Note</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <label for="customer_message" class="form-label">Inbound Customer Message</label>
+                        <button type="button" class="btn-text" id="btn-load-sample" style="font-size: 11.5px; text-decoration: underline; cursor: pointer;">
+                            Paste Sample Message
+                        </button>
+                    </div>
+                    <textarea 
+                        id="customer_message" 
+                        name="customer_message" 
+                        class="form-textarea" 
+                        rows="7" 
+                        placeholder="Paste raw email body, WhatsApp text, or escalation note here..."
+                        required>{{ entered_message or '' }}</textarea>
+                    <span class="form-hint">The original message will be preserved verbatim in SQLite for complete operational auditability.</span>
+                </div>
+
+                <div class="form-footer">
+                    <button type="submit" class="btn btn-primary" id="btn-submit-intake">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                        </svg>
+                        <span>Analyze & Extract Refund Data</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Guidance & Safety Boundaries Card -->
+        <div class="intake-sidebar-column">
+            <!-- Sample Prompt Helper Box -->
+            <div class="records-card helper-card">
+                <div class="helper-header">
+                    <h4 class="helper-title">Sample Inbound Prompt</h4>
+                    <span class="badge-tag">Reference Template</span>
+                </div>
+                <div class="sample-prompt-box" id="sample-prompt-content">
+Hi BharatTrip Support,
+
+My name is Priya Nair. I had booked a flight from Mumbai to Delhi (BOM-DEL) through EaseMyTrip. My booking PNR is 6E4902 and refund reference is RF-1142.
+
+The flight was cancelled on 2026-05-18. The total ticket amount was INR 8,400. It has been over 3 weeks and I still have not received my refund in my bank account. Please check the refund status immediately.
+
+Thanks,
+Priya Nair
+                </div>
+                <p class="form-hint" style="margin-top: 8px;">
+                    Click <strong>"Paste Sample Message"</strong> above to populate the form without auto-submitting.
+                </p>
+            </div>
+
+            <!-- Operational Governance & Safety Notice -->
+            <div class="records-card helper-card">
+                <div class="helper-header">
+                    <h4 class="helper-title">Operational Safeguards</h4>
+                </div>
+                <ul class="governance-list">
+                    <li>
+                        <strong>Non-Authoritative Triage:</strong> The AI extracts entities for human triage; it cannot authorize payouts, create finance entries, or resolve claims.
+                    </li>
+                    <li>
+                        <strong>Zero Currency Assumption:</strong> Currency is extracted only when explicitly stated in the message; never inferred or defaulted to INR.
+                    </li>
+                    <li>
+                        <strong>Automatic Review Routing:</strong> Messages with missing references, disputes, or adversarial text are queued for human review.
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.getElementById('btn-load-sample').addEventListener('click', function() {
+        var sampleText = document.getElementById('sample-prompt-content').innerText.trim();
+        var textarea = document.getElementById('customer_message');
+        textarea.value = sampleText;
+        textarea.focus();
+    });
+</script>
+{% endblock %}

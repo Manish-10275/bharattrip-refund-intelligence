@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard-container">
+    <!-- Top Header -->
+    <div class="overview-card">
+        <div class="overview-info">
+            <h2 class="overview-title">Human Oversight & Review Queue</h2>
+            <p class="overview-description">
+                Triage queue of customer refund communications flagged for human attention due to missing identifiers, amount disputes, lack of updates, or customer escalations.
+            </p>
+            <div class="reconciliation-meta-bar">
+                <span class="meta-tag">Review Stage: Operational Triage</span>
+                <span class="meta-tag">Total in Queue: {{ total_count }}</span>
+            </div>
+        </div>
+
+        <div class="overview-actions">
+            <a href="{{ url_for('intake_form_view') }}" class="btn btn-primary">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19"/>
+                    <line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                <span>New AI Intake</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- KPI Summary Row -->
+    <div class="kpi-grid">
+        <div class="kpi-card">
+            <div class="kpi-header">
+                <span class="kpi-title">Total Intakes</span>
+            </div>
+            <div class="kpi-value">{{ stats.total_intakes }}</div>
+            <div class="kpi-hint">All processed customer messages</div>
+        </div>
+
+        <div class="kpi-card">
+            <div class="kpi-header">
+                <span class="kpi-title">Pending Review</span>
+                <span class="kpi-badge badge-warning">ATTENTION</span>
+            </div>
+            <div class="kpi-value text-warning">{{ stats.pending_review }}</div>
+            <div class="kpi-hint">Requires human operator review</div>
+        </div>
+
+        <div class="kpi-card">
+            <div class="kpi-header">
+                <span class="kpi-title">Reviewed</span>
+                <span class="kpi-badge badge-success">CLEARED</span>
+            </div>
+            <div class="kpi-value text-success">{{ stats.reviewed }}</div>
+            <div class="kpi-hint">Operator triage completed</div>
+        </div>
+
+        <div class="kpi-card">
+            <div class="kpi-header">
+                <span class="kpi-title">Auto-Triaged</span>
+            </div>
+            <div class="kpi-value">{{ stats.auto_processed }}</div>
+            <div class="kpi-hint">Complete info, no manual review needed</div>
+        </div>
+    </div>
+
+    <!-- Filter Form -->
+    <div class="filter-section">
+        <form method="GET" action="{{ url_for('intake_review_queue') }}" class="filter-form">
+            <div class="filter-group">
+                <label for="category" class="filter-label">Complaint Category</label>
+                <select id="category" name="category" class="filter-select">
+                    <option value="ALL" {% if current_category == 'ALL' %}selected{% endif %}>All Categories</option>
+                    <option value="refund_status" {% if current_category == 'refund_status' %}selected{% endif %}>refund_status</option>
+                    <option value="no_update" {% if current_category == 'no_update' %}selected{% endif %}>no_update</option>
+                    <option value="missing_reference" {% if current_category == 'missing_reference' %}selected{% endif %}>missing_reference</option>
+                    <option value="amount_dispute" {% if current_category == 'amount_dispute' %}selected{% endif %}>amount_dispute</option>
+                    <option value="eligibility_dispute" {% if current_category == 'eligibility_dispute' %}selected{% endif %}>eligibility_dispute</option>
+                    <option value="other" {% if current_category == 'other' %}selected{% endif %}>other</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label for="status" class="filter-label">Processing Status</label>
+                <select id="status" name="status" class="filter-select">
+                    <option value="PENDING_REVIEW" {% if current_status == 'PENDING_REVIEW' %}selected{% endif %}>Pending Review (Default)</option>
+                    <option value="REVIEWED" {% if current_status == 'REVIEWED' %}selected{% endif %}>Reviewed Only</option>
+                    <option value="PROCESSED" {% if current_status == 'PROCESSED' %}selected{% endif %}>Auto-Processed</option>
+                    <option value="ALL" {% if current_status == 'ALL' %}selected{% endif %}>All Records</option>
+                </select>
+            </div>
+
+            <div class="filter-actions" style="margin-top: auto;">
+                <button type="submit" class="btn btn-secondary">Filter Queue</button>
+                <a href="{{ url_for('intake_review_queue') }}" class="btn btn-text">Reset</a>
+            </div>
+        </form>
+    </div>
+
+    <!-- Review Queue Table -->
+    <div class="records-card">
+        <div class="records-header">
+            <div>
+                <h3 class="records-title">
+                    {% if current_status == 'REVIEWED' %}
+                        Reviewed Customer Refund Claims
+                    {% elif current_status == 'PROCESSED' %}
+                        Auto-Processed Refund Claims
+                    {% elif current_status == 'ALL' %}
+                        All Customer Refund Claims
+                    {% else %}
+                        Customer Refund Claims Awaiting Review
+                    {% endif %}
+                </h3>
+                <p class="records-subtitle">
+                    {% if current_status == 'ALL' %}
+                        Showing all intake records across all processing statuses ({{ records|length }} of {{ total_count }} total records)
+                    {% else %}
+                        Showing {{ records|length }} of {{ total_count }} matching records
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+
+        {% if records and records|length > 0 %}
+        <div class="table-wrapper">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>ID / Created</th>
+                        <th>Customer / Agency</th>
+                        <th>Channel</th>
+                        <th>References</th>
+                        <th>Amount</th>
+                        <th>Category</th>
+                        <th>Review Reason / Gaps</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in records %}
+                    <tr>
+                        <td>
+                            <strong style="color: var(--text-navy-primary);">#{{ r.id }}</strong>
+                            <div class="table-subtext">{{ r.created_at[:16] if r.created_at else '' }}</div>
+                        </td>
+                        <td>
+                            <div style="font-weight: 600; color: var(--text-navy-primary);">
+                                {{ r.customer_name or 'Unknown Passenger' }}
+                            </div>
+                            <div class="table-subtext">{{ r.agency_name or 'Direct' }}</div>
+                        </td>
+                        <td>
+                            <span class="meta-tag">{{ r.source_channel }}</span>
+                        </td>
+                        <td>
+                            <div>
+                                <span class="table-subtext">PNR:</span>
+                                {% if r.booking_reference %}
+                                    <code>{{ r.booking_reference }}</code>
+                                {% else %}
+                                    <span class="missing-badge" style="font-size: 10px;">Missing</span>
+                                {% endif %}
+                            </div>
+                            <div style="margin-top: 2px;">
+                                <span class="table-subtext">Ref:</span>
+                                {% if r.refund_reference %}
+                                    <code>{{ r.refund_reference }}</code>
+                                {% else %}
+                                    <span class="missing-badge" style="font-size: 10px;">Missing</span>
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td>
+                            {% if r.refund_amount is not none %}
+                                <strong>{{ "%.2f"|format(r.refund_amount) }}</strong>
+                                <span class="table-subtext">{{ r.currency or 'null' }}</span>
+                            {% else %}
+                                <span class="missing">None</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="classification-badge classification-{{ r.complaint_category }}">
+                                {{ r.complaint_category }}
+                            </span>
+                        </td>
+                        <td style="max-width: 260px;">
+                            <div style="font-size: 12px; color: #92400e;">
+                                {{ r.human_review_reason or 'Requires verification' }}
+                            </div>
+                            {% if r.missing_information and r.missing_information|length > 0 %}
+                                <div class="table-subtext" style="color: #9f1239; margin-top: 2px;">
+                                    Missing: {{ r.missing_information|join(', ') }}
+                                </div>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if r.processing_status == 'REVIEWED' %}
+                                <span class="kpi-badge badge-success">REVIEWED</span>
+                            {% elif r.processing_status == 'PENDING_REVIEW' %}
+                                <span class="kpi-badge badge-warning">PENDING</span>
+                            {% elif r.processing_status == 'PROCESSED' %}
+                                <span class="kpi-badge" style="background:#ecfdf5; color:#065f46;">AUTO-PROCESSED</span>
+                            {% else %}
+                                <span class="kpi-badge">{{ r.processing_status }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div style="display: flex; gap: 6px; align-items: center;">
+                                <a href="{{ url_for('intake_detail_view', record_id=r.id) }}" class="btn btn-secondary" style="padding: 4px 10px; font-size: 11.5px;">
+                                    View
+                                </a>
+                                {% if r.processing_status == 'PENDING_REVIEW' %}
+                                <form action="{{ url_for('intake_mark_reviewed_action', record_id=r.id) }}" method="POST" style="display: inline;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                    <button type="submit" class="btn btn-primary" style="padding: 4px 10px; font-size: 11.5px;">
+                                        Mark Reviewed
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-icon-wrap">
+                <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="20 6 9 17 4 12"/>
+                </svg>
+            </div>
+            <h4 class="empty-title">Queue is Clear</h4>
+            <p class="empty-text">No refund intake messages currently require operator review under the selected filter criteria.</p>
+            <a href="{{ url_for('intake_form_view') }}" class="btn btn-primary">Process New Intake Message</a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

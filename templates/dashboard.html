@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard-container">
+    <!-- Overview Section -->
+    <section class="overview-section">
+        <div class="overview-card">
+            <div class="overview-content">
+                <h2 class="overview-title">Refund Operations Overview</h2>
+                <p class="overview-description">
+                    Centralized platform for processing passenger cancellation claims, OTA agency reconciliation, 
+                    and operational triage across domestic and international routes.
+                </p>
+            </div>
+            <div class="overview-meta">
+                <div class="meta-item">
+                    <span class="meta-label">Storage Backend</span>
+                    <span class="meta-value">Python SQLite3</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Environment</span>
+                    <span class="meta-value">Resource-Efficient (4GB RAM)</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Operational KPI Grid -->
+    <section class="kpi-grid">
+        {% for kpi in kpis %}
+        <div class="kpi-card" id="kpi-{{ kpi.id }}">
+            <div class="kpi-header">
+                <span class="kpi-title">{{ kpi.title }}</span>
+                <span class="kpi-badge">Live</span>
+            </div>
+            <div class="kpi-body">
+                <div class="kpi-value">{{ kpi.value }}</div>
+                <div class="kpi-hint">{{ kpi.hint }}</div>
+            </div>
+        </div>
+        {% endfor %}
+    </section>
+
+    <!-- Recent Refund Records Section -->
+    <section class="records-section">
+        <div class="section-header">
+            <div>
+                <h3 class="section-title">Recent Refund Records</h3>
+                <p class="section-subtitle">Real-time ledger of ingested claims and reconciliation batches</p>
+            </div>
+            <div class="table-actions">
+                <span class="record-counter">{{ total_records_display or '0 Total Records' }}</span>
+            </div>
+        </div>
+
+        <div class="table-container">
+            {% if records and records|length > 0 %}
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Booking Ref (PNR)</th>
+                        <th>Handled By / Agent</th>
+                        <th>Travel Agency</th>
+                        <th>Route</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in records %}
+                    <tr>
+                        <td><code>{{ row['booking_reference'] }}</code></td>
+                        <td>{{ row['customer_name'] }}</td>
+                        <td>{{ row['travel_agency'] or 'Direct' }}</td>
+                        <td>{{ row['route'] or 'N/A' }}</td>
+                        <td>₹{{ "%.2f"|format(row['refund_amount'] or 0) }}</td>
+                        <td><span class="status-tag status-{{ row['status']|lower }}">{{ row['status'] }}</span></td>
+                        <td>{{ row['created_at'] }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <!-- Professional Empty State -->
+            <div class="empty-state">
+                <div class="empty-icon-wrap">
+                    <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <line x1="9" y1="13" x2="15" y2="13"/>
+                        <line x1="9" y1="17" x2="13" y2="17"/>
+                    </svg>
+                </div>
+                <h4 class="empty-title">No Refund Records Ingested</h4>
+                <p class="empty-text">
+                    The refund transaction database is initialized and ready. Records will appear here as passenger requests
+                    are captured via AI Intake or imported via reconciliation batches.
+                </p>
+                <div class="empty-status-pill">Database Table: <code>support_records</code> initialized</div>
+            </div>
+            {% endif %}
+        </div>
+    </section>
+</div>
+{% endblock %}

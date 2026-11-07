@@ -1,0 +1,47 @@
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Python Caches & Environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Raw Operational Workbooks & Data
+*.xlsx
+*.xls
+BharatTrip_Refund_Data.xlsx
+
+# Deliverables & Local Submission Folders (Excluded from Public Git)
+submission/
+*.pdf
+*.zip
+Create_BharatTrip_Source_Submission_Zip.ps1
+BharatTrip_*
+
+# Internal Audit Reports (Excluded from Public Git)
+docs/final_integrity_audit.md
+docs/intake_workflow_audit.md
+docs/live_demo_readiness_audit.md
+docs/reconciliation_audit.md
+docs/data_quality_report.md
+
+# Logs & Temporary Files
+*.log
+*.tmp
+.DS_Store
+Thumbs.db

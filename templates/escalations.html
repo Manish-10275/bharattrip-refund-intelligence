@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard-container">
+    <!-- Overview Section -->
+    <section class="overview-section">
+        <div class="overview-card">
+            <div class="overview-content">
+                <h2 class="overview-title">Dispute Escalations Ledger</h2>
+                <p class="overview-description">
+                    Centralized audit ledger of partner agency escalations and high-priority refund disputes.
+                    Tracks aging analysis, communication channels, and resolution timestamps across travel partners.
+                </p>
+                <div class="reconciliation-meta-bar">
+                    <span class="meta-tag">Source Table: <code>escalation_records</code></span>
+                    <span class="meta-tag">Resolution Tracking: <code>resolved_on</code></span>
+                    <span class="meta-tag">Read-Only Audit</span>
+                </div>
+            </div>
+            <div class="overview-meta">
+                <div class="meta-item">
+                    <span class="meta-label">Total Escalations</span>
+                    <span class="meta-value">{{ total_count }} Records</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Active / Open</span>
+                    <span class="meta-value text-danger">{{ open_count }} Open</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Resolved</span>
+                    <span class="meta-value text-success">{{ resolved_count }} Resolved</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- KPI Summary Grid -->
+    <section class="kpi-grid" style="grid-template-columns: repeat(3, 1fr);">
+        <div class="kpi-card" id="kpi-escalations-total">
+            <div class="kpi-header">
+                <span class="kpi-title">Total Escalations</span>
+                <span class="kpi-badge">Ingested</span>
+            </div>
+            <div class="kpi-body">
+                <div class="kpi-value">{{ total_count }}</div>
+                <div class="kpi-hint">All historical partner escalations</div>
+            </div>
+        </div>
+
+        <div class="kpi-card kpi-card-warning" id="kpi-escalations-open">
+            <div class="kpi-header">
+                <span class="kpi-title">Open Disputes</span>
+                <span class="kpi-badge badge-warning">Unresolved</span>
+            </div>
+            <div class="kpi-body">
+                <div class="kpi-value text-warning">{{ open_count }}</div>
+                <div class="kpi-hint">Requires partner resolution (resolved_on is null)</div>
+            </div>
+        </div>
+
+        <div class="kpi-card kpi-card-success" id="kpi-escalations-resolved">
+            <div class="kpi-header">
+                <span class="kpi-title">Resolved Disputes</span>
+                <span class="kpi-badge badge-success">Closed</span>
+            </div>
+            <div class="kpi-body">
+                <div class="kpi-value text-success">{{ resolved_count }}</div>
+                <div class="kpi-hint">Resolved and documented with completion date</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Filters Section -->
+    <section class="filter-section">
+        <form method="GET" action="{{ url_for('escalations_view') }}" class="filter-form">
+            <div class="filter-group">
+                <label for="status" class="filter-label">Resolution Status</label>
+                <select name="status" id="status" class="filter-select">
+                    <option value="ALL" {% if status_filter == 'ALL' %}selected{% endif %}>All Records ({{ total_count }})</option>
+                    <option value="OPEN" {% if status_filter == 'OPEN' %}selected{% endif %}>Open Only ({{ open_count }})</option>
+                    <option value="RESOLVED" {% if status_filter == 'RESOLVED' %}selected{% endif %}>Resolved Only ({{ resolved_count }})</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label for="channel" class="filter-label">Channel</label>
+                <select name="channel" id="channel" class="filter-select">
+                    <option value="ALL" {% if channel_filter == 'ALL' %}selected{% endif %}>All Channels</option>
+                    {% for ch in channels %}
+                    <option value="{{ ch }}" {% if channel_filter == ch %}selected{% endif %}>{{ ch }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="filter-group search-group">
+                <label for="search" class="filter-label">Search Reference / Agency / Subject</label>
+                <input type="text" name="search" id="search" value="{{ search_query or '' }}" placeholder="e.g. ESC-501, RF-1325, GoFly, status..." class="filter-input">
+            </div>
+
+            <div class="filter-actions">
+                <button type="submit" class="btn btn-secondary">Apply Filters</button>
+                <a href="{{ url_for('escalations_view') }}" class="btn btn-text">Reset</a>
+            </div>
+        </form>
+    </section>
+
+    <!-- Escalation Records Table -->
+    <section class="records-section">
+        <div class="section-header">
+            <div>
+                <h3 class="section-title">Escalation Records</h3>
+                <p class="section-subtitle">Showing {{ records|length }} of {{ filtered_count }} matching escalations (Page {{ page }} of {{ total_pages }})</p>
+            </div>
+            <div class="table-actions">
+                <span class="record-counter">{{ filtered_count }} Total Filtered</span>
+            </div>
+        </div>
+
+        <div class="table-container">
+            {% if records and records|length > 0 %}
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th style="width: 100px;">Escalation ID</th>
+                        <th style="width: 110px;">Raised On</th>
+                        <th style="width: 110px;">Related Ticket</th>
+                        <th style="width: 140px;">Agency / Team</th>
+                        <th style="width: 90px;">Channel</th>
+                        <th>Complaint Details</th>
+                        <th style="width: 90px;">Status</th>
+                        <th style="width: 85px;">Days Open</th>
+                        <th style="width: 110px;">Resolved On</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in records %}
+                    <tr>
+                        <td><code>{{ row['norm_escalation_id'] or row['escalation_id'] }}</code></td>
+                        <td>{{ row['raised_on'] }}</td>
+                        <td>
+                            {% if row['norm_related_ref'] %}
+                            <code>{{ row['norm_related_ref'] }}</code>
+                            {% elif row['related_ticket_ref'] %}
+                            <code>{{ row['related_ticket_ref'] }}</code>
+                            {% else %}
+                            <span class="status-none">None</span>
+                            {% endif %}
+                        </td>
+                        <td><strong>{{ row['agent_team'] }}</strong></td>
+                        <td><span class="meta-tag">{{ row['channel'] }}</span></td>
+                        <td><div class="reason-text">{{ row['complaint'] }}</div></td>
+                        <td>
+                            {% if row['resolved_on'] %}
+                            <span class="status-tag status-resolved">Resolved</span>
+                            {% else %}
+                            <span class="status-tag status-open">Open</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ row['days_open'] }}d</td>
+                        <td>
+                            {% if row['resolved_on'] %}
+                            {{ row['resolved_on'] }}
+                            {% else %}
+                            <span class="status-none">Pending</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            <!-- Pagination Controls -->
+            <div class="pagination-footer">
+                <div>
+                    Showing {{ ((page - 1) * per_page) + 1 }} to {{ ((page - 1) * per_page) + records|length }} of {{ filtered_count }} records
+                </div>
+                <div class="pagination-controls">
+                    {% if page > 1 %}
+                    <a href="{{ url_for('escalations_view', page=page-1, status=status_filter, channel=channel_filter, search=search_query) }}" class="pagination-btn">← Previous</a>
+                    {% endif %}
+                    <span class="pagination-current">Page {{ page }} of {{ total_pages }}</span>
+                    {% if page < total_pages %}
+                    <a href="{{ url_for('escalations_view', page=page+1, status=status_filter, channel=channel_filter, search=search_query) }}" class="pagination-btn">Next →</a>
+                    {% endif %}
+                </div>
+            </div>
+            {% else %}
+            <!-- Empty State -->
+            <div class="empty-state">
+                <div class="empty-icon-wrap">
+                    <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="8" x2="12" y2="12"/>
+                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                </div>
+                <h4 class="empty-title">No Escalations Found</h4>
+                <p class="empty-text">No dispute escalation records matched your filter criteria or search query.</p>
+                <a href="{{ url_for('escalations_view') }}" class="btn btn-secondary">Clear Filters</a>
+            </div>
+            {% endif %}
+        </div>
+    </section>
+</div>
+{% endblock %}

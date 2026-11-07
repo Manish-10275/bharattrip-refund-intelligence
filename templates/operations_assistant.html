@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard-container">
+    <!-- Overview Section -->
+    <section class="overview-section">
+        <div class="overview-card">
+            <div class="overview-content">
+                <h2 class="overview-title">Refund Operations Assistant</h2>
+                <p class="overview-description">
+                    Operational guidance directory and automated workflow management.
+                    To guarantee financial data integrity and eliminate conversational hallucinations, the platform provides
+                    specialized, deterministic workflows with human-in-the-loop oversight rather than an unconstrained chatbot.
+                </p>
+                <div class="reconciliation-meta-bar">
+                    <span class="meta-tag">Architecture: Purpose-Built Workflows</span>
+                    <span class="meta-tag">AI Backend: Groq LLM (Strict Schema)</span>
+                    <span class="meta-tag">Safety: Deterministic Financial Verification</span>
+                </div>
+            </div>
+            <div class="overview-meta">
+                <div class="meta-item">
+                    <span class="meta-label">Active Workflows</span>
+                    <span class="meta-value text-success">5 Operational</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Roadmap Modules</span>
+                    <span class="meta-value">3 Planned</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Operational Guardrail Callout Banner -->
+    <div class="notice-banner">
+        <svg class="notice-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="16" x2="12" y2="12"/>
+            <line x1="12" y1="8" x2="12.01" y2="8"/>
+        </svg>
+        <div>
+            <strong>Operational Policy & System Boundary:</strong>
+            The platform does not provide an open-ended conversational bot or automated payment disbursement.
+            All AI operations are strictly restricted to structured message intake, validation, and human review triage.
+            Below is the verified directory of currently active tools and planned capabilities.
+        </div>
+    </div>
+
+    <!-- Active Operational Workflows -->
+    <section class="records-section">
+        <div class="section-header">
+            <div>
+                <h3 class="section-title">Currently Available Operational Workflows</h3>
+                <p class="section-subtitle">Fully implemented and functional backend capabilities available to operators</p>
+            </div>
+            <div class="table-actions">
+                <span class="badge-live">5 Active Systems</span>
+            </div>
+        </div>
+
+        <div class="assistant-grid">
+            <!-- 1. AI Intake -->
+            <div class="assistant-card">
+                <div class="assistant-card-header">
+                    <h4 class="assistant-card-title">AI Refund Request Intake</h4>
+                    <span class="badge-live">Live</span>
+                </div>
+                <p class="assistant-card-desc">
+                    Processes raw unstructured refund communications from customer emails, WhatsApp chats, and manual desk notes.
+                    Extracts booking reference, customer name, flight route, claim amount, currency, and complaint category using Groq LLM with strict Pydantic validation.
+                </p>
+                <div>
+                    <a href="{{ url_for('intake_form_view') }}" class="btn btn-primary" style="font-size: 12px; padding: 6px 14px;">
+                        Open AI Intake Form →
+                    </a>
+                </div>
+            </div>
+
+            <!-- 2. Review Queue -->
+            <div class="assistant-card">
+                <div class="assistant-card-header">
+                    <h4 class="assistant-card-title">Human Oversight Review Queue</h4>
+                    <span class="badge-live">Live</span>
+                </div>
+                <p class="assistant-card-desc">
+                    Centralized triage queue capturing flagged customer requests requiring operator intervention.
+                    Isolates claims with missing identifiers, amount disputes, lack of progress, or low extraction confidence before any downstream processing.
+                </p>
+                <div>
+                    <a href="{{ url_for('intake_review_queue') }}" class="btn btn-secondary" style="font-size: 12px; padding: 6px 14px;">
+                        View Review Queue →
+                    </a>
+                </div>
+            </div>
+
+            <!-- 3. Reconciliation Engine -->
+            <div class="assistant-card">
+                <div class="assistant-card-header">
+                    <h4 class="assistant-card-title">Cross-Department Reconciliation</h4>
+                    <span class="badge-live">Live</span>
+                </div>
+                <p class="assistant-card-desc">
+                    Deterministic cross-department engine matching Support Tracker tickets against Finance Tracker bank disbursements.
+                    Identifies status mismatches, unbilled refunds, untracked payments, duplicate reference claims, and ambiguous candidates.
+                </p>
+                <div>
+                    <a href="{{ url_for('reconciliation_view') }}" class="btn btn-secondary" style="font-size: 12px; padding: 6px 14px;">
+                        Open Reconciliation Engine →
+                    </a>
+                </div>
+            </div>
+
+            <!-- 4. Escalations Ledger -->
+            <div class="assistant-card">
+                <div class="assistant-card-header">
+                    <h4 class="assistant-card-title">Partner Dispute Escalations</h4>
+                    <span class="badge-live">Live</span>
+                </div>
+                <p class="assistant-card-desc">
+                    Comprehensive audit ledger of B2B travel partner escalations.
+                    Tracks aging duration, communication channels, complaint categories, and partner resolution statuses with clean separation of open vs. resolved disputes.
+                </p>
+                <div>
+                    <a href="{{ url_for('escalations_view') }}" class="btn btn-secondary" style="font-size: 12px; padding: 6px 14px;">
+                        Open Escalations Ledger →
+                    </a>
+                </div>
+            </div>
+
+            <!-- 5. Unified Refund Records -->
+            <div class="assistant-card">
+                <div class="assistant-card-header">
+                    <h4 class="assistant-card-title">Unified Refund Records Ledger</h4>
+                    <span class="badge-live">Live</span>
+                </div>
+                <p class="assistant-card-desc">
+                    Complete cross-system records view correlating Support Tracker tickets and Finance Tracker payment records with independent status auditing and payout evidence checks.
+                </p>
+                <div>
+                    <a href="{{ url_for('refund_records_view') }}" class="btn btn-secondary" style="font-size: 12px; padding: 6px 14px;">
+                        Browse Refund Records →
+                    </a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Planned Roadmap Capabilities -->
+    <section class="records-section" style="margin-top: 10px;">
+        <div class="section-header">
+            <div>
+                <h3 class="section-title">Planned Future Capabilities</h3>
+                <p class="section-subtitle">Roadmap items scheduled for upcoming platform releases (Not yet implemented)</p>
+            </div>
+            <div class="table-actions">
+                <span class="badge-planned">Roadmap</span>
+            </div>
+        </div>
+
+        <div class="assistant-grid">
+            <!-- Planned 1 -->
+            <div class="assistant-card" style="opacity: 0.85;">
+                <div class="assistant-card-header">
+                    <h4 class="assistant-card-title">Carrier Dispute Auto-Filing</h4>
+                    <span class="badge-planned">Planned</span>
+                </div>
+                <p class="assistant-card-desc">
+                    Automated draft generation of airline dispute claims for mismatched flight cancellations and unauthorized fare deductions.
+                    Will integrate directly with GDS feeds and carrier claims portals.
+                </p>
+                <div>
+                    <span class="meta-tag" style="color: #64748b;">Status: Scheduled for Phase 6</span>
+                </div>
+            </div>
+
+            <!-- Planned 2 -->
+            <div class="assistant-card" style="opacity: 0.85;">
+                <div class="assistant-card-header">
+                    <h4 class="assistant-card-title">Airline Policy & Fare Rule Retrieval</h4>
+                    <span class="badge-planned">Planned</span>
+                </div>
+                <p class="assistant-card-desc">
+                    Retrieval-Augmented Generation (RAG) assistant for indexing airline cancellation tariffs, DGCA regulatory mandates, and force majeure travel waivers.
+                </p>
+                <div>
+                    <span class="meta-tag" style="color: #64748b;">Status: In Design Review</span>
+                </div>
+            </div>
+
+            <!-- Planned 3 -->
+            <div class="assistant-card" style="opacity: 0.85;">
+                <div class="assistant-card-header">
+                    <h4 class="assistant-card-title">Autonomous Discrepancy Resolution</h4>
+                    <span class="badge-planned">Planned</span>
+                </div>
+                <p class="assistant-card-desc">
+                    Autonomous cross-system reconciliation agent to reconcile complex multi-segment itineraries, interline ticket exchanges, and partial flight cancellations.
+                </p>
+                <div>
+                    <span class="meta-tag" style="color: #64748b;">Status: In Research</span>
+                </div>
+            </div>
+        </div>
+    </section>
+</div>
+{% endblock %}

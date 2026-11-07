@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard-container">
+    <!-- Header Summary & Actions -->
+    <section class="overview-section">
+        <div class="overview-card">
+            <div class="overview-content">
+                <h2 class="overview-title">Refund Reconciliation Ledger</h2>
+                <p class="overview-description">
+                    Cross-system deterministic comparison between Support Tracker claims and Finance Tracker disbursements.
+                    Identifies missing counterpart records, status divergences, duplicate submissions, and exceptions requiring human audit.
+                </p>
+                <div class="reconciliation-meta-bar">
+                    <span class="meta-tag">Run ID: #{{ summary.id }}</span>
+                    <span class="meta-tag">Timestamp: {{ summary.run_timestamp }}</span>
+                    <span class="meta-tag status-{{ summary.status|lower }}">Status: {{ summary.status }}</span>
+                </div>
+            </div>
+            <div class="reconciliation-actions">
+                <form action="{{ url_for('run_reconciliation_action') }}" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                    <button type="submit" class="btn btn-primary">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"/>
+                            <polyline points="1 20 1 14 7 14"/>
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                        </svg>
+                        <span>Re-run Reconciliation</span>
+                    </button>
+                </form>
+            </div>
+        </div>
+    </section>
+
+    <!-- 6 KPI Metric Cards & Review Queue Highlight -->
+    <section class="kpi-grid">
+        <div class="kpi-card">
+            <div class="kpi-header">
+                <span class="kpi-title">Total Candidates</span>
+                <span class="kpi-badge">Evaluated</span>
+            </div>
+            <div class="kpi-body">
+                <div class="kpi-value">{{ summary.total_candidates }}</div>
+                <div class="kpi-hint">Total candidate records</div>
+            </div>
+        </div>
+
+        <div class="kpi-card kpi-card-success">
+            <div class="kpi-header">
+                <span class="kpi-title">Matched</span>
+                <span class="kpi-badge badge-success">Consistent</span>
+            </div>
+            <div class="kpi-body">
+                <div class="kpi-value text-success">{{ summary.matched_count }}</div>
+                <div class="kpi-hint">Verified payout / agreed non-payout</div>
+            </div>
+        </div>
+
+        <div class="kpi-card kpi-card-warning">
+            <div class="kpi-header">
+                <span class="kpi-title">Status Mismatches</span>
+                <span class="kpi-badge badge-warning">Discrepancy</span>
+            </div>
+            <div class="kpi-body">
+                <div class="kpi-value text-warning">{{ summary.status_mismatch_count }}</div>
+                <div class="kpi-hint">Conflicting departmental states</div>
+            </div>
+        </div>
+
+        <div class="kpi-card">
+            <div class="kpi-header">
+                <span class="kpi-title">Support Only</span>
+                <span class="kpi-badge">Unbilled</span>
+            </div>
+            <div class="kpi-body">
+                <div class="kpi-value">{{ summary.support_only_count }}</div>
+                <div class="kpi-hint">In Support, missing in Finance</div>
+            </div>
+        </div>
+
+        <div class="kpi-card">
+            <div class="kpi-header">
+                <span class="kpi-title">Finance Only</span>
+                <span class="kpi-badge">Untracked</span>
+            </div>
+            <div class="kpi-body">
+                <div class="kpi-value">{{ summary.finance_only_count }}</div>
+                <div class="kpi-hint">In Finance, missing in Support</div>
+            </div>
+        </div>
+
+        <div class="kpi-card kpi-card-danger">
+            <div class="kpi-header">
+                <span class="kpi-title">Review Queue</span>
+                <span class="kpi-badge badge-danger">Attention</span>
+            </div>
+            <div class="kpi-body">
+                <div class="kpi-value text-danger">{{ summary.review_required_count }}</div>
+                <div class="kpi-hint">{{ summary.duplicate_reference_count }} duplicates, {{ summary.ambiguous_match_count }} ambiguous</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Filters Section -->
+    <section class="filter-section">
+        <form method="GET" action="{{ url_for('reconciliation_view') }}" class="filter-form">
+            <div class="filter-group">
+                <label for="classification" class="filter-label">Classification</label>
+                <select name="classification" id="classification" class="filter-select">
+                    <option value="ALL" {% if current_classification == 'ALL' %}selected{% endif %}>All Classifications</option>
+                    <option value="MATCHED" {% if current_classification == 'MATCHED' %}selected{% endif %}>MATCHED ({{ summary.matched_count }})</option>
+                    <option value="STATUS_MISMATCH" {% if current_classification == 'STATUS_MISMATCH' %}selected{% endif %}>STATUS_MISMATCH ({{ summary.status_mismatch_count }})</option>
+                    <option value="SUPPORT_ONLY" {% if current_classification == 'SUPPORT_ONLY' %}selected{% endif %}>SUPPORT_ONLY ({{ summary.support_only_count }})</option>
+                    <option value="FINANCE_ONLY" {% if current_classification == 'FINANCE_ONLY' %}selected{% endif %}>FINANCE_ONLY ({{ summary.finance_only_count }})</option>
+                    <option value="DUPLICATE_REFERENCE" {% if current_classification == 'DUPLICATE_REFERENCE' %}selected{% endif %}>DUPLICATE_REFERENCE ({{ summary.duplicate_reference_count }})</option>
+                    <option value="AMBIGUOUS_MATCH" {% if current_classification == 'AMBIGUOUS_MATCH' %}selected{% endif %}>AMBIGUOUS_MATCH ({{ summary.ambiguous_match_count }})</option>
+                    <option value="INVALID_REFERENCE" {% if current_classification == 'INVALID_REFERENCE' %}selected{% endif %}>INVALID_REFERENCE ({{ summary.invalid_reference_count }})</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label for="review" class="filter-label">Review Status</label>
+                <select name="review" id="review" class="filter-select">
+                    <option value="ALL" {% if current_review == 'ALL' %}selected{% endif %}>All Records</option>
+                    <option value="REQUIRED" {% if current_review == 'REQUIRED' %}selected{% endif %}>Review Required ({{ summary.review_required_count }})</option>
+                    <option value="NOT_REQUIRED" {% if current_review == 'NOT_REQUIRED' %}selected{% endif %}>No Review Needed ({{ summary.total_candidates - summary.review_required_count }})</option>
+                </select>
+            </div>
+
+            <div class="filter-group search-group">
+                <label for="search" class="filter-label">Search Reference / Notes</label>
+                <input type="text" name="search" id="search" value="{{ search_query or '' }}" placeholder="e.g. RF-1286, Pending Payout..." class="filter-input">
+            </div>
+
+            <div class="filter-actions">
+                <button type="submit" class="btn btn-secondary">Apply Filters</button>
+                <a href="{{ url_for('reconciliation_view') }}" class="btn btn-text">Reset</a>
+            </div>
+        </form>
+    </section>
+
+    <!-- Reconciliation Results Table -->
+    <section class="records-section">
+        <div class="section-header">
+            <div>
+                <h3 class="section-title">Reconciliation Candidates Ledger</h3>
+                <p class="section-subtitle">Showing {{ results|length }} of {{ total_count }} records matching criteria</p>
+            </div>
+            <div class="table-actions">
+                <span class="record-counter">{{ total_count }} Total Filtered</span>
+            </div>
+        </div>
+
+        <div class="table-container">
+            {% if results and results|length > 0 %}
+            <table class="data-table reconciliation-table">
+                <thead>
+                    <tr>
+                        <th style="width: 110px;">Norm Ref</th>
+                        <th style="width: 150px;">Classification</th>
+                        <th>Support Tracker Record</th>
+                        <th>Finance Tracker Record</th>
+                        <th>Operational Reason / Variance</th>
+                        <th style="width: 120px;">Review</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in results %}
+                    <tr class="{% if row.review_required %}row-review-required{% endif %}">
+                        <td>
+                            <code>{{ row.norm_reference or 'N/A' }}</code>
+                        </td>
+                        <td>
+                            <span class="badge badge-classification badge-{{ row.classification|lower }}">
+                                {{ row.classification }}
+                            </span>
+                        </td>
+                        <td>
+                            {% if row.original_support_ref %}
+                            <div class="sub-record">
+                                <div class="sub-record-ref">Ref: <strong>{{ row.original_support_ref }}</strong></div>
+                                <div class="sub-record-meta">
+                                    <span class="status-tag status-{{ row.support_status|lower }}">{{ row.support_status }}</span>
+                                    <span>Route: {{ row.support_route or 'N/A' }}</span>
+                                    <span>Claim: ₹{{ "%.2f"|format(row.support_amount or 0) }}</span>
+                                </div>
+                                <div class="sub-record-agent">Agent: {{ row.support_agent or 'Direct' }}</div>
+                            </div>
+                            {% else %}
+                            <span class="text-muted italic">No Support Record</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if row.original_finance_ref %}
+                            <div class="sub-record">
+                                <div class="sub-record-ref">Ref: <strong>{{ row.original_finance_ref }}</strong></div>
+                                <div class="sub-record-meta">
+                                    <span class="status-tag status-{{ row.finance_status|lower }}">{{ row.finance_status }}</span>
+                                    <span>Sector: {{ row.finance_sector or 'N/A' }}</span>
+                                    <span>Paid: ₹{{ "%.2f"|format(row.finance_paid or 0) }}</span>
+                                    {% if row.finance_deduction %}
+                                    <span class="text-deduction">Ded: ₹{{ "%.2f"|format(row.finance_deduction) }}</span>
+                                    {% endif %}
+                                </div>
+                                <div class="sub-record-agent">Agent: {{ row.finance_agent or 'N/A' }}</div>
+                            </div>
+                            {% else %}
+                            <span class="text-muted italic">No Finance Record</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="reason-text">{{ row.reason }}</div>
+                        </td>
+                        <td>
+                            {% if row.review_required %}
+                            <span class="review-badge review-needed">
+                                <span class="badge-dot"></span> Required
+                            </span>
+                            {% else %}
+                            <span class="review-badge review-ok">Auto / OK</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state">
+                <div class="empty-icon-wrap">
+                    <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <circle cx="11" cy="11" r="8"/>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                </div>
+                <h4 class="empty-title">No Matching Reconciliation Records</h4>
+                <p class="empty-text">No records match the selected classification and review status filters.</p>
+                <a href="{{ url_for('reconciliation_view') }}" class="btn btn-secondary">Clear Filters</a>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Pagination Controls -->
+        {% if total_pages > 1 %}
+        <div class="pagination-footer">
+            <div class="pagination-info">
+                Page {{ current_page }} of {{ total_pages }} ({{ total_count }} total records)
+            </div>
+            <div class="pagination-controls">
+                {% if current_page > 1 %}
+                <a href="{{ url_for('reconciliation_view', classification=current_classification, review=current_review, search=search_query, page=current_page-1) }}" class="pagination-btn">Previous</a>
+                {% endif %}
+                
+                <span class="pagination-current">{{ current_page }}</span>
+                
+                {% if current_page < total_pages %}
+                <a href="{{ url_for('reconciliation_view', classification=current_classification, review=current_review, search=search_query, page=current_page+1) }}" class="pagination-btn">Next</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}

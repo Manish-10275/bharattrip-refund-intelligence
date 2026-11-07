@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard-container">
+    <!-- Overview Section -->
+    <section class="overview-section">
+        <div class="overview-card">
+            <div class="overview-content">
+                <h2 class="overview-title">Unified Refund Records Ledger</h2>
+                <p class="overview-description">
+                    Cross-system ledger displaying passenger refund claims, agency bookings, and financial disbursements.
+                    Correlates operational Support Tracker tickets with Finance Tracker payout entries without conflating departmental states.
+                </p>
+                <div class="reconciliation-meta-bar">
+                    <span class="meta-tag">Source Tables: <code>support_records</code> & <code>finance_records</code></span>
+                    <span class="meta-tag">Reconciliation: <code>reconciliation_results</code></span>
+                    <span class="meta-tag">Read-Only Audit</span>
+                </div>
+            </div>
+            <div class="overview-meta">
+                <div class="meta-item">
+                    <span class="meta-label">Total Candidates</span>
+                    <span class="meta-value">{{ total_candidates }} Records</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Verified Payouts</span>
+                    <span class="meta-value text-success">{{ matched_count }} Matched</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Needs Review</span>
+                    <span class="meta-value text-warning">{{ review_required_count }} Discrepancies</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Operational Guardrail Callout Banner -->
+    <div class="notice-banner">
+        <svg class="notice-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+        </svg>
+        <div>
+            <strong>Operational Policy & Audit Safeguard:</strong>
+            Support ticket closure (<code>Closed</code>) merely documents that customer service resolved communication; it does <strong>not</strong> prove bank disbursement.
+            Similarly, Finance <code>Refund Done</code> does <strong>not</strong> count as a verified payout without matching corroboration and payout evidence (<code>processed_on</code> timestamp).
+            Mismatched, duplicate, or unverified claims remain subject to human verification.
+        </div>
+    </div>
+
+    <!-- Filters Section -->
+    <section class="filter-section">
+        <form method="GET" action="{{ url_for('refund_records_view') }}" class="filter-form">
+            <div class="filter-group">
+                <label for="classification" class="filter-label">Reconciliation State</label>
+                <select name="classification" id="classification" class="filter-select">
+                    <option value="ALL" {% if classification_filter == 'ALL' %}selected{% endif %}>All Records ({{ total_candidates }})</option>
+                    <option value="MATCHED" {% if classification_filter == 'MATCHED' %}selected{% endif %}>MATCHED ({{ matched_count }})</option>
+                    <option value="UNRESOLVED" {% if classification_filter == 'UNRESOLVED' %}selected{% endif %}>All Unresolved / Mismatches ({{ review_required_count }})</option>
+                    <option value="STATUS_MISMATCH" {% if classification_filter == 'STATUS_MISMATCH' %}selected{% endif %}>STATUS_MISMATCH</option>
+                    <option value="SUPPORT_ONLY" {% if classification_filter == 'SUPPORT_ONLY' %}selected{% endif %}>SUPPORT_ONLY</option>
+                    <option value="FINANCE_ONLY" {% if classification_filter == 'FINANCE_ONLY' %}selected{% endif %}>FINANCE_ONLY</option>
+                    <option value="DUPLICATE_REFERENCE" {% if classification_filter == 'DUPLICATE_REFERENCE' %}selected{% endif %}>DUPLICATE_REFERENCE</option>
+                    <option value="AMBIGUOUS_MATCH" {% if classification_filter == 'AMBIGUOUS_MATCH' %}selected{% endif %}>AMBIGUOUS_MATCH</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label for="support_status" class="filter-label">Support Status</label>
+                <select name="support_status" id="support_status" class="filter-select">
+                    <option value="ALL" {% if support_status_filter == 'ALL' %}selected{% endif %}>All Support States</option>
+                    <option value="Closed" {% if support_status_filter == 'Closed' %}selected{% endif %}>Closed</option>
+                    <option value="Working" {% if support_status_filter == 'Working' %}selected{% endif %}>Working</option>
+                    <option value="Escalated" {% if support_status_filter == 'Escalated' %}selected{% endif %}>Escalated</option>
+                    <option value="Not Eligible" {% if support_status_filter == 'Not Eligible' %}selected{% endif %}>Not Eligible</option>
+                    <option value="NONE" {% if support_status_filter == 'NONE' %}selected{% endif %}>No Support Record</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label for="finance_status" class="filter-label">Finance Status</label>
+                <select name="finance_status" id="finance_status" class="filter-select">
+                    <option value="ALL" {% if finance_status_filter == 'ALL' %}selected{% endif %}>All Finance States</option>
+                    <option value="Refund Done" {% if finance_status_filter == 'Refund Done' %}selected{% endif %}>Refund Done</option>
+                    <option value="Declined" {% if finance_status_filter == 'Declined' %}selected{% endif %}>Declined</option>
+                    <option value="Pending Payout" {% if finance_status_filter == 'Pending Payout' %}selected{% endif %}>Pending Payout</option>
+                    <option value="NONE" {% if finance_status_filter == 'NONE' %}selected{% endif %}>No Finance Record</option>
+                </select>
+            </div>
+
+            <div class="filter-group search-group">
+                <label for="search" class="filter-label">Search References / Agency / Route</label>
+                <input type="text" name="search" id="search" value="{{ search_query or '' }}" placeholder="e.g. RF-1003, GoFly, DEL-BOM..." class="filter-input">
+            </div>
+
+            <div class="filter-actions">
+                <button type="submit" class="btn btn-secondary">Apply Filters</button>
+                <a href="{{ url_for('refund_records_view') }}" class="btn btn-text">Reset</a>
+            </div>
+        </form>
+    </section>
+
+    <!-- Refund Records Table -->
+    <section class="records-section">
+        <div class="section-header">
+            <div>
+                <h3 class="section-title">Refund Transaction Candidates</h3>
+                <p class="section-subtitle">Showing {{ records|length }} of {{ filtered_count }} matching records (Page {{ page }} of {{ total_pages }})</p>
+            </div>
+            <div class="table-actions">
+                <span class="record-counter">{{ filtered_count }} Filtered Candidates</span>
+            </div>
+        </div>
+
+        <div class="table-container">
+            {% if records and records|length > 0 %}
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th style="width: 105px;">Norm Ref</th>
+                        <th style="width: 105px;">Support Ticket</th>
+                        <th style="width: 105px;">Finance Ref</th>
+                        <th style="width: 130px;">Travel Agency</th>
+                        <th style="width: 95px;">Route</th>
+                        <th style="width: 95px;">Claimed</th>
+                        <th style="width: 95px;">Disbursed</th>
+                        <th style="width: 105px;">Support Status</th>
+                        <th style="width: 115px;">Finance Status</th>
+                        <th style="width: 125px;">Payout Evidence</th>
+                        <th style="width: 120px;">Reconciliation</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in records %}
+                    <tr>
+                        <td><code>{{ row['norm_reference'] or 'N/A' }}</code></td>
+                        <td>
+                            {% if row['support_ref'] %}
+                            <code>{{ row['support_ref'] }}</code>
+                            {% else %}
+                            <span class="status-none">—</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if row['finance_ref'] %}
+                            <code>{{ row['finance_ref'] }}</code>
+                            {% else %}
+                            <span class="status-none">—</span>
+                            {% endif %}
+                        </td>
+                        <td><strong>{{ row['agency'] }}</strong></td>
+                        <td>{{ row['route'] }}</td>
+                        <td>
+                            {% if row['support_amount'] is not none %}
+                            ₹{{ "%.2f"|format(row['support_amount']) }}
+                            {% else %}
+                            <span class="status-none">—</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if row['finance_amount'] is not none %}
+                            ₹{{ "%.2f"|format(row['finance_amount']) }}
+                            {% else %}
+                            <span class="status-none">—</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if row['support_status'] %}
+                            <span class="status-tag status-{{ row['support_status']|lower }}">{{ row['support_status'] }}</span>
+                            {% else %}
+                            <span class="status-none">No Record</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if row['finance_status'] %}
+                            <span class="status-tag status-{{ row['finance_status']|lower }}">{{ row['finance_status'] }}</span>
+                            {% else %}
+                            <span class="status-none">No Record</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if row['classification'] == 'MATCHED' and row['finance_status'] == 'Refund Done' and row['finance_processed_on'] %}
+                            <span class="review-badge review-ok" title="Disbursed on {{ row['finance_processed_on'] }}">
+                                <span class="badge-dot" style="background: #10b981;"></span>
+                                Verified Payout
+                            </span>
+                            {% elif row['finance_status'] == 'Refund Done' %}
+                            <span class="review-badge review-needed" title="Requires corroboration (processed: {{ row['finance_processed_on'] or 'None' }})">
+                                <span class="badge-dot"></span>
+                                Unverified Payout
+                            </span>
+                            {% elif row['finance_status'] == 'Declined' %}
+                            <span class="status-tag status-declined">Declined</span>
+                            {% elif row['finance_status'] == 'Pending Payout' %}
+                            <span class="status-tag status-working">Pending</span>
+                            {% else %}
+                            <span class="status-none">—</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if row['classification'] == 'MATCHED' %}
+                            <span class="badge badge-success">MATCHED</span>
+                            {% elif row['classification'] == 'STATUS_MISMATCH' %}
+                            <span class="badge badge-warning">MISMATCH</span>
+                            {% elif row['classification'] == 'SUPPORT_ONLY' %}
+                            <span class="meta-tag">SUPPORT_ONLY</span>
+                            {% elif row['classification'] == 'FINANCE_ONLY' %}
+                            <span class="meta-tag">FINANCE_ONLY</span>
+                            {% elif row['classification'] == 'DUPLICATE_REFERENCE' %}
+                            <span class="badge badge-danger">DUPLICATE</span>
+                            {% elif row['classification'] == 'AMBIGUOUS_MATCH' %}
+                            <span class="badge badge-danger">AMBIGUOUS</span>
+                            {% else %}
+                            <span class="meta-tag">{{ row['classification'] }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            <!-- Pagination Controls -->
+            <div class="pagination-footer">
+                <div>
+                    Showing {{ ((page - 1) * per_page) + 1 }} to {{ ((page - 1) * per_page) + records|length }} of {{ filtered_count }} records
+                </div>
+                <div class="pagination-controls">
+                    {% if page > 1 %}
+                    <a href="{{ url_for('refund_records_view', page=page-1, classification=classification_filter, support_status=support_status_filter, finance_status=finance_status_filter, search=search_query) }}" class="pagination-btn">← Previous</a>
+                    {% endif %}
+                    <span class="pagination-current">Page {{ page }} of {{ total_pages }}</span>
+                    {% if page < total_pages %}
+                    <a href="{{ url_for('refund_records_view', page=page+1, classification=classification_filter, support_status=support_status_filter, finance_status=finance_status_filter, search=search_query) }}" class="pagination-btn">Next →</a>
+                    {% endif %}
+                </div>
+            </div>
+            {% else %}
+            <!-- Empty State -->
+            <div class="empty-state">
+                <div class="empty-icon-wrap">
+                    <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <rect width="18" height="18" x="3" y="3" rx="2"/>
+                        <path d="M3 9h18"/>
+                        <path d="M9 21V9"/>
+                    </svg>
+                </div>
+                <h4 class="empty-title">No Matching Refund Records</h4>
+                <p class="empty-text">No refund candidates matched your search criteria or filter combinations.</p>
+                <a href="{{ url_for('refund_records_view') }}" class="btn btn-secondary">Clear All Filters</a>
+            </div>
+            {% endif %}
+        </div>
+    </section>
+</div>
+{% endblock %}
