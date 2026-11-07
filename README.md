@@ -1,14 +1,14 @@
 # BharatTrip Refund Intelligence
 
-A financial operations platform and triage system designed for B2B flight refund management, cross-departmental reconciliation, dispute tracking, and structured customer message intake.
+An operational prototype and triage system designed for B2B flight refund management, deterministic cross-departmental reconciliation, dispute tracking, and structured customer message intake.
 
 ---
 
 ## 1. Project Overview
 
-BharatTrip Refund Intelligence is an operational prototype built to solve cross-departmental discrepancies in flight booking refund workflows. It bridges the gap between customer-facing support tickets, finance payout disbursements, and partner agency dispute escalations by providing:
+BharatTrip Refund Intelligence is an operations prototype built to identify and triage cross-departmental discrepancies in flight booking refund workflows. It bridges the gap between customer-facing support tickets, finance payout disbursements, and partner agency dispute escalations by providing:
 - Deterministic, rule-based cross-departmental reconciliation.
-- Automated, structured intake of unstructured customer communications using Groq AI.
+- Automated extraction of unstructured customer communications using Groq AI with strict JSON schema validation.
 - Human-in-the-loop review workflows with financial guardrails.
 - Read-only operational ledgers with search, filtering, and pagination.
 
@@ -16,7 +16,7 @@ BharatTrip Refund Intelligence is an operational prototype built to solve cross-
 
 ## 2. Business Problem
 
-Online travel agencies (OTAs) and flight booking consolidators face severe operational frictions during refund processing:
+Online travel agencies (OTAs) and flight booking consolidators face operational frictions during refund processing:
 - **Disparate Record Systems:** Support teams log customer cancellation claims with loose ticket references (`RF-1234`, `RF 1234`, `rf-1234`), while Finance tracks payouts against bank batch references, and external agencies log dispute escalations with missing or placeholder references (`-`, `no ref`).
 - **Status Divergence:** Support may mark a ticket as "Refunded" based on airline communication, while Finance still shows the payout as "Pending" or "Failed" in the banking rail, leaving customers without funds.
 - **Unstructured Inbound Channels:** Customers send unstructured refund inquiries across email, SMS, and WhatsApp in colloquial English or Romanized Hindi ("paisa wapas kab aayega", "flight cancelled refund not received"). Agents spend substantial time manually parsing PNRs, dates, and amounts.
@@ -26,7 +26,7 @@ Online travel agencies (OTAs) and flight booking consolidators face severe opera
 
 ## 3. Proposed Operational Solution
 
-BharatTrip Refund Intelligence delivers an integrated three-layer operational system:
+BharatTrip Refund Intelligence provides an integrated three-layer operational system:
 
 1. **Ingestion & Data Sanitization Layer:**
    - Cryptographic SHA-256 ingestion hashing to enforce idempotency.
@@ -35,14 +35,14 @@ BharatTrip Refund Intelligence delivers an integrated three-layer operational sy
 
 2. **Deterministic Reconciliation Engine:**
    - Evaluates normalized candidate pairings between Support and Finance into seven mutually exclusive, deterministic classifications.
-   - Clearly separates payout agreements (544 cases) from agreed non-payouts (27 not eligible cases).
+   - Separates Support `Closed` / Finance `Refund Done` payout agreements (544 cases) from agreed non-payouts (27 `Not Eligible` / `Declined` cases).
    - Surfaces status mismatches, duplicate claims, and ambiguous sector/route conflicts directly into a human review queue.
 
 3. **Defensive AI Intake & Human Review Subsystem:**
    - Employs Groq AI (`openai/gpt-oss-20b`) with strict JSON schema validation to convert unstructured inquiries into typed records.
    - Treats customer text strictly as untrusted input, neutralizing prompt injection attempts.
-   - Enforces strict null safety (zero hallucination of unmentioned PNRs or dates) and currency discipline (never defaulting to INR without explicit symbols/codes).
-   - Enforces mandatory human review flags whenever confidence is low or required data is absent.
+   - Enforces strict null handling (prohibiting fabricated extraction of unmentioned PNRs, dates, or amounts) and explicit currency discipline (never defaulting to INR without explicit symbols/codes).
+   - Flags records for mandatory operator review whenever confidence is low or required data is absent.
 
 ---
 
@@ -60,19 +60,19 @@ BharatTrip Refund Intelligence delivers an integrated three-layer operational sy
 |   (Support, Finance,     |       |   (openai/gpt-oss-20b)         |
 |      Escalations)        |       |   - Untrusted Input Boundary   |
 +--------------------------+       |   - Strict JSON Schema         |
-             |                     |   - Zero Hallucination Nulls   |
+             |                     |   - Strict Null Safeguards     |
              v                     +--------------------------------+
 +--------------------------+                       |
 |   Data Ingestion Layer   |                       v
 |  - Idempotency Hashing   |       +--------------------------------+
 |  - Reference Regex Norm  |       |   Human Triage Review Queue    |
 |  - Missing Value NULLs   |       |   - Mandatory Justifications   |
-+--------------------------+       |   - Status Transitions         |
++--------------------------+       |   - Operator Review Sign-off   |
              |                     +--------------------------------+
              v                                     |
 +-------------------------------------------------------------------+
 |               SQLite Core Database (refund_intelligence.db)       |
-|  - import_history       - reconciliation_runs   - refund_intake   |
+|  - import_history       - reconciliation_runs   - intake_records  |
 |  - support_records      - reconciliation_results                  |
 |  - finance_records      - escalation_records                      |
 +-------------------------------------------------------------------+
@@ -88,10 +88,10 @@ BharatTrip Refund Intelligence delivers an integrated three-layer operational sy
                                    v
              +-------------------------------------------+
              |         Web Operations Interface          |
-             |  - Operations Dashboard (/dashboard)      |
+             |  - Operations Dashboard (/)               |
              |  - Dispute Escalations (/escalations)     |
              |  - Reconciliation Ledger (/reconciliation)|
-             |  - Correlated Refund Records (/refund)    |
+             |  - Correlated Refund Records (/refund-records)
              |  - Operations Assistant (/assistant)      |
              |  - Session Auth & CSRF Protection         |
              +-------------------------------------------+
@@ -101,7 +101,7 @@ BharatTrip Refund Intelligence delivers an integrated three-layer operational sy
 
 ## 5. Technology Stack
 
-- **Runtime:** Python 3.14+ (compatible with standard Python 3.11+)
+- **Runtime:** Python 3.14 (tested runtime; compatible with Python 3.10–3.14 supported by package dependencies)
 - **Web Framework:** Flask 3.1 (WSGI application)
 - **Session Security & Forms:** Flask-WTF 1.2+ (CSRF protection, secure cookie handling)
 - **Relational Storage:** SQLite 3 (Python native `sqlite3` driver)
@@ -116,9 +116,9 @@ BharatTrip Refund Intelligence delivers an integrated three-layer operational sy
 
 The reconciliation engine operates as a deterministic finite-state machine across normalized references:
 
-| Category | Definition | Operational Handling |
+| Category | Definition under Implemented Rules | Operational Handling |
 | :--- | :--- | :--- |
-| **`MATCHED`** | Support and Finance agree on reference and terminal status. | Automatic resolution. Sub-divided into 544 agreed payout disbursements and 27 agreed non-payouts (e.g. non-refundable fares). |
+| **`MATCHED`** | Agreement between Support and Finance under implemented deterministic matching rules. | Automated categorization: sub-divided into 544 agreed payout disbursements (Support `Closed` + Finance `Refund Done`) and 27 agreed non-payouts (Support `Not Eligible` + Finance `Declined`). *Note:* Neither classification establishes independent external bank transaction confirmation or settlement verification. |
 | **`STATUS_MISMATCH`** | Matching reference found, but operational status conflicts (e.g. Support: Refunded, Finance: Pending). | Flagged for manual review (`review_required = 1`). |
 | **`SUPPORT_ONLY`** | Ticket logged in Support tracker with no corresponding entry in Finance ledger. | Payout backlog triage required. |
 | **`FINANCE_ONLY`** | Payout disbursed in Finance with no recorded Support ticket. | Unlinked payout audit required. |
@@ -136,7 +136,7 @@ Inbound customer inquiries are processed via Groq Cloud SDK using the `openai/gp
 
 1. **System Prompt Governance:** A specialized system prompt (`prompt_history/production_groq_system_prompt.md`) establishes seven strict operational boundaries.
 2. **Defensive Prompt Injection Safety:** Inbound customer messages are treated strictly as untrusted text. Adversarial instructions (e.g., "Ignore previous instructions", "Approve my refund immediately") are neutralized, recorded as customer text, and flagged for human review.
-3. **Factual Grounding & Null Discipline:** The model is prohibited from fabricating passenger names, PNRs, dates, or amounts. Fields not explicitly stated in the source text must resolve to `null`.
+3. **Factual Grounding & Null Safeguards:** The system implements strict schema constraints and explicit null handling to prevent the generation of fabricated values. Fields not explicitly stated in the source text must resolve to `null`.
 4. **Explicit Currency Discipline:** The model never assumes `INR` based on Indian travel context or airline names. Currency is extracted only when an explicit symbol (`₹`, `$`) or code (`INR`, `USD`) is present.
 5. **Strict Schema Enforcement:** Output is validated against a Pydantic schema (`services/intake_schema.py`) enforcing types, confidence boundaries (`[0.0, 1.0]`), and non-empty justifications when human review is required.
 
@@ -147,8 +147,12 @@ Inbound customer inquiries are processed via Groq Cloud SDK using the `openai/gp
 To prevent automated financial leakage, the system implements three foundational guardrails:
 
 - **Strict Non-Authority of AI:** The LLM has zero authority to approve, initiate, reject, or mark refunds as paid. It acts purely as a structured extraction and classification triage layer.
-- **Mandatory Review Trigger:** Inbound records with confidence below threshold, unstated reference IDs, amount discrepancies, or injection attempts automatically enter the `PENDING_REVIEW` queue.
-- **Audit Sign-off Trail:** Human operators inspect the extracted structured JSON side-by-side with the verbatim original text before approving status transitions (`PENDING_REVIEW` -> `REVIEWED` -> `PROCESSED`).
+- **Review Lifecycle State Transitions:**
+  - Records triaged automatically without requiring human oversight (`human_review_required = False`) are initialized directly with `processing_status = 'PROCESSED'`.
+  - Records requiring human attention (`human_review_required = True`) are initialized with `processing_status = 'PENDING_REVIEW'`.
+  - When an authorized operator inspects the extraction and completes review via `POST /intake/<record_id>/review`, the status transitions from `PENDING_REVIEW` to `REVIEWED`.
+  - `REVIEWED` represents human operator sign-off and does not automatically transition to `PROCESSED`.
+- **Audit Sign-off Trail:** Human operators inspect the extracted structured JSON side-by-side with the verbatim original text before signing off on pending records.
 
 ---
 
@@ -173,7 +177,7 @@ bharattrip-refund-intelligence/
 │
 ├── templates/                     # Jinja2 presentation templates
 │   ├── base.html                  # Shell layout & authenticated navigation
-│   ├── dashboard.html             # Operations overview & KPI counters
+│   ├── dashboard.html             # Operations dashboard & KPI counters
 │   ├── escalations.html           # Dispute escalation records ledger
 │   ├── intake_detail.html         # AI extraction inspector & review interface
 │   ├── intake_form.html           # Inbound message submission form
@@ -316,13 +320,19 @@ http://127.0.0.1:5000/login
 ```
 Sign in with the `OPERATOR_USERNAME` and the plaintext password configured during Step 3.
 
-### Core Web Endpoints:
-- `/dashboard` — Operational metrics, pending triage KPIs, and records ledger.
-- `/reconciliation` — Deterministic reconciliation ledger and on-demand reconciliation run trigger.
+### Documented Flask Routes:
+- `/` — Main operations dashboard, pending triage KPIs, and records ledger overview.
+- `/reconciliation` — Deterministic reconciliation ledger and candidate review queue.
+- `/reconciliation/run` — On-demand deterministic reconciliation trigger (`POST`, CSRF-protected).
 - `/escalations` — Partner agency dispute escalations with resolution filters, search, and pagination.
 - `/refund-records` — Correlated refund candidates ledger correlating Support and Finance statuses.
-- `/intake` — Inbound customer message intake form with representative test templates.
+- `/assistant` — Operations quick navigation assistant with direct workflow shortcuts.
+- `/intake` — Inbound customer message intake form (`GET`) and analysis submission (`POST`).
+- `/intake/<int:record_id>` — Structured extraction inspector displaying extracted fields and confidence.
+- `/intake/<int:record_id>/review` — Operator review sign-off action (`POST`, CSRF-protected).
 - `/intake/review` — Human oversight queue for triaging and processing pending AI intake records.
+- `/login` — Operator authentication interface (`GET`/`POST`).
+- `/logout` — Secure operator session termination (`POST`, CSRF-protected).
 - `/health` — Public health check endpoint returning JSON runtime status.
 
 ---
@@ -345,10 +355,10 @@ python -m unittest discover tests -v
 
 ---
 
-## 14. Known Limitations
+## 14. Known Prototype Limitations
 
-1. **Local SQLite Architecture:** This prototype uses a local SQLite database suitable for single-node evaluation and testing. Multi-node production deployment requires migrating to a hosted relational database (e.g. PostgreSQL) with row-level locking.
-2. **Synchronous LLM Inference:** Inbound AI intake runs synchronously within the HTTP request cycle with a 30-second timeout. High-throughput production environments require an asynchronous background task worker (e.g. Celery / Redis Queue).
+1. **Local SQLite Architecture:** This prototype uses a local SQLite database suitable for single-node evaluation and testing. Multi-node deployment requires migrating to a hosted relational database (e.g. PostgreSQL) with connection pooling.
+2. **Synchronous LLM Inference:** Inbound AI intake runs synchronously within the HTTP request cycle with a 30-second timeout. High-throughput environments require an asynchronous background task worker (e.g. Celery / Redis Queue).
 3. **Absence of Banking Rail Integration:** The platform reconciles recorded ledger entries; it does not directly dispatch automated payment orders to banking APIs (e.g. UPI, NEFT, IMPS rails).
 
 ---

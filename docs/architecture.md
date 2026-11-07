@@ -1,12 +1,12 @@
 # BharatTrip Refund Intelligence — Architecture Specification
 
-This document details the software architecture, core services, database schemas, and integration patterns for the BharatTrip Refund Intelligence platform.
+This document details the software architecture, core services, database schemas, and integration patterns for the BharatTrip Refund Intelligence operational prototype.
 
 ---
 
 ## 1. System Overview & Component Diagram
 
-The platform is designed as a modular, audit-grade financial operations and triage system built on Flask 3.1, SQLite 3, Pydantic 2, and Groq SDK.
+The platform is designed as an operational prototype and triage system built on Flask 3.1, SQLite 3, Pydantic 2, and Groq SDK.
 
 ```
                            +----------------------------------------+
@@ -20,19 +20,19 @@ The platform is designed as a modular, audit-grade financial operations and tria
 |   (Support, Finance,     |       |   (openai/gpt-oss-20b)         |
 |      Escalations)        |       |   - Untrusted Input Boundary   |
 +--------------------------+       |   - Strict JSON Schema         |
-             |                     |   - Zero Hallucination Nulls   |
+             |                     |   - Strict Null Safeguards     |
              v                     +--------------------------------+
 +--------------------------+                       |
 |   Data Ingestion Layer   |                       v
 |  - Idempotency Hashing   |       +--------------------------------+
 |  - Reference Regex Norm  |       |   Human Triage Review Queue    |
 |  - Missing Value NULLs   |       |   - Mandatory Justifications   |
-+--------------------------+       |   - Status Transitions         |
++--------------------------+       |   - Operator Review Sign-off   |
              |                     +--------------------------------+
              v                                     |
 +-------------------------------------------------------------------+
 |               SQLite Core Database (refund_intelligence.db)       |
-|  - import_history       - reconciliation_runs   - refund_intake   |
+|  - import_history       - reconciliation_runs   - intake_records  |
 |  - support_records      - reconciliation_results                  |
 |  - finance_records      - escalation_records                      |
 +-------------------------------------------------------------------+
@@ -48,10 +48,10 @@ The platform is designed as a modular, audit-grade financial operations and tria
                                    v
              +-------------------------------------------+
              |         Web Operations Interface          |
-             |  - Operations Dashboard (/dashboard)      |
+             |  - Operations Dashboard (/)               |
              |  - Dispute Escalations (/escalations)     |
              |  - Reconciliation Ledger (/reconciliation)|
-             |  - Correlated Refund Records (/refund)    |
+             |  - Correlated Refund Records (/refund-records)
              |  - Operations Assistant (/assistant)      |
              |  - Session Auth & CSRF Protection         |
              +-------------------------------------------+
@@ -70,12 +70,13 @@ The platform is designed as a modular, audit-grade financial operations and tria
 ### 2.2 Deterministic Reconciliation Engine (`services/reconciliation_service.py`)
 - **Responsibility:** Evaluates normalized candidate pairings between Support and Finance tracking.
 - **Deterministic State Machine:** Classifies candidate evaluation units into seven mutually exclusive categories:
-  1. `MATCHED`: Complete agreement on reference and status.
-     - *544 Payout Outcomes:* Both departments agree refund was paid.
-     - *27 Non-Payout Outcomes:* Both departments agree ticket was not eligible / canceled.
+  1. `MATCHED`: Represents agreement between Support and Finance under the implemented deterministic matching rules.
+     - *544 Payout Agreements:* Support status `Closed` and Finance status `Refund Done` with payout fields populated.
+     - *27 Non-Payout Outcomes:* Agreed Support `Not Eligible` and Finance `Declined` outcomes.
+     - *Important Boundary:* Neither classification establishes independent external bank transaction confirmation or bank settlement verification; it confirms alignment between the internal tracking datasets.
   2. `STATUS_MISMATCH`: Matching reference but contradictory operational statuses (e.g. Support marked Refunded while Finance shows Pending/Rejected).
   3. `SUPPORT_ONLY`: Support ticket exists with no finance record.
-  4. `FINANCE_ONLY`: Payout disbursement made without a corresponding support record.
+  4. `FINANCE_ONLY`: Payout disbursement recorded in Finance without a corresponding support record.
   5. `DUPLICATE_REFERENCE`: Multiple conflicting records on one side sharing a reference.
   6. `AMBIGUOUS_MATCH`: Matching reference with conflicting airline sector or passenger route.
   7. `INVALID_REFERENCE`: Placeholder (`-`, `no ref`) or blank reference.
@@ -84,12 +85,18 @@ The platform is designed as a modular, audit-grade financial operations and tria
 ### 2.3 Groq AI Extraction Service (`services/groq_service.py` & `services/intake_schema.py`)
 - **Responsibility:** Transforms unformatted, multilingual, or colloquial inbound messages into typed structured JSON.
 - **Model Runtime:** `openai/gpt-oss-20b` via Groq Cloud SDK.
+- **Extraction Safeguards & Null Handling:** The service uses strict JSON schema validation and explicit prompt guardrails to prevent the generation of fabricated values. Fields not explicitly stated in customer text (passenger names, PNRs, dates, amounts) must strictly resolve to `null`.
 - **Defensive Prompt Injection Safety:** Treats all customer text strictly as untrusted input data. Injection commands ("Ignore previous instructions", "Approve immediately") are ignored, flagged, and assigned to human oversight.
-- **Factual Grounding & Currency Rules:** The model possesses zero decision authority. Unstated fields strictly resolve to `null`. Currency is extracted only when an explicit symbol (`₹`, `$`) or code (`INR`, `USD`) is provided.
+- **Factual Grounding & Currency Rules:** The model possesses zero decision authority. Currency is extracted only when an explicit symbol (`₹`, `$`) or code (`INR`, `USD`) is present in the customer message.
 
 ### 2.4 Intake Operations Service (`services/intake_service.py`)
-- **Responsibility:** Manages the lifecycle of inbound AI intake records (`PENDING_REVIEW` -> `REVIEWED` -> `PROCESSED`).
-- **Human Oversight Gate:** Enforces human review flags when confidence is below threshold, when required entities are missing, or when policy disputes are identified.
+- **Responsibility:** Manages the persistence and triage lifecycle of inbound intake records in `intake_records`.
+- **Review Lifecycle State Transitions:**
+  - Records triaged automatically without requiring human oversight (`human_review_required = False`) are initialized directly with `processing_status = 'PROCESSED'`.
+  - Records requiring human attention (`human_review_required = True`) are initialized with `processing_status = 'PENDING_REVIEW'`.
+  - When an authorized operator inspects the extraction and completes review via `POST /intake/<record_id>/review`, the status transitions from `PENDING_REVIEW` to `REVIEWED`.
+  - `REVIEWED` represents human operator sign-off and does not automatically transition to `PROCESSED`.
+- **Human Oversight Gate:** Enforces human review flags when confidence is low, when required entities are missing, or when policy disputes are identified.
 
 ---
 
@@ -103,13 +110,13 @@ The SQLite schema consists of seven relational tables:
 4. **`escalation_records`**: Ingested agency dispute escalations with related ticket reference, raised date, team, channel, complaint, status, and resolution date.
 5. **`reconciliation_runs`**: Header table storing run timestamp, total candidates, classification counts, and review metrics.
 6. **`reconciliation_results`**: Individual candidate evaluation units linked to run ID, support record ID, finance record ID, classification tag, and reason.
-7. **`refund_intake`**: Inbound AI-triaged messages with raw customer text, validated JSON, extracted entities, confidence, review flags, and audit sign-offs.
+7. **`intake_records`**: Inbound AI-triaged messages with raw customer text, validated JSON, extracted entities, confidence, review flags, and audit sign-offs.
 
 ---
 
 ## 4. Security & Compliance Architecture
 
-- **Cryptographic Secret Enforcement:** `config.py` enforces a non-empty `SECRET_KEY` in production environments. Application startup fails with a `RuntimeError` if missing.
+- **Cryptographic Secret Enforcement:** `config.py` enforces a non-empty `SECRET_KEY` in non-testing environments. Application startup fails with a `RuntimeError` if missing.
 - **Session Authentication:** All operational endpoints require an authenticated operator session verified via `@login_required`.
 - **CSRF Defense:** All mutating requests (`POST /login`, `POST /logout`, `POST /intake`, `POST /reconciliation/run`) require valid CSRF tokens via Flask-WTF.
 - **Cookie Security:** `SESSION_COOKIE_HTTPONLY = True`, `SESSION_COOKIE_SAMESITE = 'Lax'`, and configurable `SESSION_COOKIE_SECURE`.
