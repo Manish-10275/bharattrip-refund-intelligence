@@ -103,12 +103,13 @@ BharatTrip Refund Intelligence provides an integrated three-layer operational sy
 
 - **Runtime:** Python 3.14 (tested runtime; compatible with Python 3.10–3.14 supported by package dependencies)
 - **Web Framework:** Flask 3.1 (WSGI application)
+- **WSGI Production Server:** Gunicorn 21+ (multi-worker UNIX HTTP server)
 - **Session Security & Forms:** Flask-WTF 1.2+ (CSRF protection, secure cookie handling)
-- **Relational Storage:** SQLite 3 (Python native `sqlite3` driver)
+- **Relational Storage:** SQLite 3 (Python native `sqlite3` driver with configurable persistent disk path)
 - **Data Ingestion & Cleansing:** Pandas 2.0+ & OpenPyXL 3.1+
 - **Data Validation & Typing:** Pydantic 2.0+
 - **AI Model & Inference:** Groq Python SDK (`openai/gpt-oss-20b`)
-- **Testing Framework:** Python standard library `unittest`
+- **Testing Framework:** Python standard library `unittest` (89 automated tests)
 
 ---
 
@@ -161,6 +162,8 @@ To prevent automated financial leakage, the system implements three foundational
 ```text
 bharattrip-refund-intelligence/
 ├── README.md                      # Platform documentation & operational guide
+├── render.yaml                    # Render Blueprint deployment specification
+├── Procfile                       # Gunicorn web process definition
 ├── .gitignore                     # Git exclusion rules
 ├── .env.example                   # Environment variable template
 ├── requirements.txt               # Python package dependencies
@@ -190,14 +193,14 @@ bharattrip-refund-intelligence/
 ├── static/
 │   └── style.css                  # Light-theme enterprise CSS
 │
-├── tests/                         # Automated unit & integration tests (85 tests)
+├── tests/                         # Automated unit & integration tests (89 tests)
 │   ├── __init__.py
 │   ├── test_data_service.py       # Ingestion & normalization tests (7 tests)
 │   ├── test_groq_service.py       # Groq extraction & safety tests (15 tests)
 │   ├── test_intake_routes.py      # Route authentication & CSRF tests (23 tests)
 │   ├── test_navigation_and_pages.py # Navigation & read-only tests (19 tests)
 │   ├── test_reconciliation_service.py # Reconciliation state tests (10 tests)
-│   └── test_security_and_metrics.py # Security & metric isolation tests (11 tests)
+│   └── test_security_and_metrics.py # Security & metric isolation tests (15 tests)
 │
 ├── docs/                          # Architecture & methodology documentation
 │   ├── architecture.md            # System architecture specification
@@ -339,7 +342,7 @@ Sign in with the `OPERATOR_USERNAME` and the plaintext password configured durin
 
 ## 13. Running Automated Tests
 
-The automated test suite contains 85 tests across 6 modules, requiring zero external network connectivity:
+The automated test suite contains 89 tests across 6 modules, requiring zero external network connectivity:
 
 ```bash
 python -m unittest discover tests -v
@@ -351,21 +354,86 @@ python -m unittest discover tests -v
 - `tests/test_intake_routes.py` (23 tests) — Session authentication, login/logout redirects, CSRF enforcement, review queue transitions.
 - `tests/test_navigation_and_pages.py` (19 tests) — Navigation routing, filtering, search, pagination, read-only immutability.
 - `tests/test_reconciliation_service.py` (10 tests) — Deterministic classification, status mismatch detection, duplicate reference handling.
-- `tests/test_security_and_metrics.py` (11 tests) — Production `SECRET_KEY` startup failure, test secret fallback, metric independence.
+- `tests/test_security_and_metrics.py` (15 tests) — Production `SECRET_KEY`, `OPERATOR_USERNAME`, and `OPERATOR_PASSWORD_HASH` enforcement, `SESSION_COOKIE_SECURE` production defaults, persistent disk parent directory creation, and metric independence.
 
 ---
 
-## 14. Known Prototype Limitations
+## 14. Production Deployment on Render
 
-1. **Local SQLite Architecture:** This prototype uses a local SQLite database suitable for single-node evaluation and testing. Multi-node deployment requires migrating to a hosted relational database (e.g. PostgreSQL) with connection pooling.
+The repository includes a ready-to-use Render Blueprint (`render.yaml`) and Gunicorn WSGI configuration (`Procfile`).
+
+### 14.1 Render Blueprint Deployment (Recommended)
+
+1. Connect your GitHub repository to [Render](https://render.com/).
+2. Select **Blueprints** -> **New Blueprint Instance**.
+3. Select `bharattrip-refund-intelligence`.
+4. Render automatically parses `render.yaml` and configures:
+   - **Service Name:** `bharattrip-refund-intelligence`
+   - **Environment:** `python`
+   - **Build Command:** `pip install -r requirements.txt`
+   - **Start Command:** `gunicorn --bind 0.0.0.0:$PORT app:app`
+   - **Health Check Path:** `/health`
+   - **Persistent Disk:** Mounted at `/var/data` (1 GB)
+5. Configure the required secret environment variables in the Render Dashboard:
+   - `OPERATOR_USERNAME`: Your designated operator login username (e.g. `admin_ops`).
+   - `OPERATOR_PASSWORD_HASH`: Werkzeug scrypt hash generated with:
+     ```bash
+     python -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('YourSecurePasswordHere'))"
+     ```
+   - `GROQ_API_KEY`: (Optional) Your Groq API key for live AI customer inquiry intake.
+6. Deploy the service. Render will automatically provision a random `SECRET_KEY`, mount the persistent disk at `/var/data`, and initialize the SQLite database at `/var/data/bharattrip.db`.
+
+### 14.2 Manual Render Web Service Setup
+
+If configuring manually without Blueprints:
+| Configuration Field | Recommended Production Value |
+| :--- | :--- |
+| **Runtime** | `Python` |
+| **Build Command** | `pip install -r requirements.txt` |
+| **Start Command** | `gunicorn --bind 0.0.0.0:$PORT app:app` |
+| **Health Check Path** | `/health` |
+| **Disk Name** | `bharattrip-data` |
+| **Mount Path** | `/var/data` |
+| **Disk Size** | `1 GB` |
+
+#### Required Environment Variables:
+```dotenv
+DATABASE=/var/data/bharattrip.db
+SECRET_KEY=<generate-via-python-secrets>
+OPERATOR_USERNAME=<your-operator-username>
+OPERATOR_PASSWORD_HASH=<generate-via-werkzeug-hash>
+SESSION_COOKIE_SECURE=true
+WTF_CSRF_ENABLED=true
+GROQ_API_KEY=<your-groq-api-key>
+GROQ_MODEL=openai/gpt-oss-20b
+GROQ_REQUEST_TIMEOUT=30.0
+```
+
+### 14.3 Persistent Disk & Initial Data Loading
+
+Because SQLite data is stored on the persistent disk mounted at `/var/data`, tables are initialized automatically upon first application start. To import operational historical data on Render:
+1. Open the Render Web Shell for the deployed service.
+2. If the operational workbook is uploaded or transferred:
+   ```bash
+   python -c "from services.data_service import DataService; print(DataService().import_workbook('BharatTrip_Refund_Data.xlsx'))"
+   python -c "from services.reconciliation_service import ReconciliationService; print(ReconciliationService().run_reconciliation())"
+   ```
+3. All ingested records and reconciliation runs remain persisted on `/var/data/bharattrip.db` across future code updates, container deploys, and restarts.
+
+---
+
+## 15. Known Prototype Limitations
+
+1. **Local SQLite Architecture:** This prototype uses a local SQLite database suitable for single-node evaluation and testing. Multi-node horizontal scaling requires migrating to a hosted relational database (e.g. PostgreSQL) with connection pooling.
 2. **Synchronous LLM Inference:** Inbound AI intake runs synchronously within the HTTP request cycle with a 30-second timeout. High-throughput environments require an asynchronous background task worker (e.g. Celery / Redis Queue).
 3. **Absence of Banking Rail Integration:** The platform reconciles recorded ledger entries; it does not directly dispatch automated payment orders to banking APIs (e.g. UPI, NEFT, IMPS rails).
 
 ---
 
-## 15. Security & Privacy Notes
+## 16. Security & Privacy Notes
 
 - **Zero Hardcoded Credentials:** The repository contains no production API keys, secrets, or database passwords. All configuration is loaded from environment variables via `config.py`.
+- **Enforced Production Security:** Non-testing environments strictly mandate `SECRET_KEY`, `OPERATOR_USERNAME`, and `OPERATOR_PASSWORD_HASH` at application startup, failing immediately if any are omitted.
 - **Untrusted Input Security:** Inbound customer messages are treated strictly as untrusted data, preventing prompt injection attacks from overriding system instructions.
-- **CSRF & Session Security:** Mutating HTTP requests require valid CSRF tokens. Sessions are authenticated via HTTP-only cookies with configurable `SameSite` and `Secure` attributes.
-- **Data Protection:** The original operational workbook and production databases are excluded from version control via `.gitignore`.
+- **CSRF & Session Security:** Mutating HTTP requests require valid CSRF tokens. Sessions are authenticated via HTTP-only cookies with `SESSION_COOKIE_SECURE=True` enforced in production.
+- **Data Protection:** The original operational workbook, `.env` secrets, and database files are strictly excluded from version control via `.gitignore`.

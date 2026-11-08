@@ -64,9 +64,13 @@ def get_db():
     """
     Get or create an application-context SQLite database connection.
     Uses sqlite3.Row for dictionary-like column access.
+    Automatically ensures the directory for configurable database paths exists.
     """
     if "db" not in g:
-        db_path = app.config["DATABASE"]
+        db_path = app.config.get("DATABASE", "bharattrip.db")
+        db_dir = os.path.dirname(os.path.abspath(db_path))
+        if db_dir and not os.path.exists(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
         g.db = sqlite3.connect(db_path)
         g.db.row_factory = sqlite3.Row
     return g.db
@@ -82,6 +86,16 @@ def close_db(error=None):
 
 def init_db():
     """Initialize SQLite tables for application and data ingestion."""
+    db_path = app.config.get("DATABASE", "bharattrip.db")
+    db_dir = os.path.dirname(os.path.abspath(db_path))
+    if db_dir and not os.path.exists(db_dir):
+        os.makedirs(db_dir, exist_ok=True)
+
+    # Sync service database paths with the active configuration
+    data_service.db_path = db_path
+    reconciliation_service.db_path = db_path
+    intake_service.db_path = db_path
+
     db = get_db()
     db.execute("""
         CREATE TABLE IF NOT EXISTS refund_records (
@@ -100,6 +114,11 @@ def init_db():
     data_service.init_schema(db)
     reconciliation_service.init_schema(db)
     intake_service.init_schema(db)
+
+
+# Initialize database schema automatically upon startup (supports Gunicorn workers & persistent disks)
+with app.app_context():
+    init_db()
 
 
 # ==============================================================================

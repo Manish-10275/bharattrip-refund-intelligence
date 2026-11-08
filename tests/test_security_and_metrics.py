@@ -8,7 +8,15 @@ from unittest.mock import patch
 from dotenv import load_dotenv
 
 from app import app, init_db
-from config import Config, get_secret_key, is_testing_environment, parse_bool
+from config import (
+    Config,
+    get_secret_key,
+    get_operator_username,
+    get_operator_password_hash,
+    get_session_cookie_secure,
+    is_testing_environment,
+    parse_bool
+)
 
 
 class TestSecurityConfigurationAndMetrics(unittest.TestCase):
@@ -253,6 +261,83 @@ class TestSecurityConfigurationAndMetrics(unittest.TestCase):
             with self.assertRaises(RuntimeError) as ctx:
                 get_secret_key()
             self.assertIn("FATAL: SECRET_KEY environment variable is not set", str(ctx.exception))
+
+
+    # --------------------------------------------------------------------------
+    # 4. Production Operator Credentials, Cookie Security & Database Auto-Creation
+    # --------------------------------------------------------------------------
+
+    def test_12_operator_username_enforcement_in_production(self):
+        """OPERATOR_USERNAME is required in non-testing environments and raises RuntimeError if missing."""
+        with patch.dict(os.environ, {"OPERATOR_USERNAME": "", "TESTING": "False", "FLASK_ENV": ""}, clear=False):
+            with self.assertRaises(RuntimeError) as ctx:
+                get_operator_username()
+            self.assertIn("FATAL: OPERATOR_USERNAME environment variable is not set", str(ctx.exception))
+
+        with patch.dict(os.environ, {"OPERATOR_USERNAME": "lead_ops", "TESTING": "False", "FLASK_ENV": ""}, clear=False):
+            self.assertEqual(get_operator_username(), "lead_ops")
+
+        with patch.dict(os.environ, {"OPERATOR_USERNAME": "", "TESTING": "True", "FLASK_ENV": ""}, clear=False):
+            self.assertEqual(get_operator_username(), "operator")
+
+    def test_13_operator_password_hash_enforcement_in_production(self):
+        """OPERATOR_PASSWORD_HASH is required in non-testing environments and raises RuntimeError if missing."""
+        with patch.dict(os.environ, {"OPERATOR_PASSWORD_HASH": "", "TESTING": "False", "FLASK_ENV": ""}, clear=False):
+            with self.assertRaises(RuntimeError) as ctx:
+                get_operator_password_hash()
+            self.assertIn("FATAL: OPERATOR_PASSWORD_HASH environment variable is not set", str(ctx.exception))
+
+        with patch.dict(os.environ, {"OPERATOR_PASSWORD_HASH": "scrypt:prod_hash", "TESTING": "False", "FLASK_ENV": ""}, clear=False):
+            self.assertEqual(get_operator_password_hash(), "scrypt:prod_hash")
+
+        with patch.dict(os.environ, {"OPERATOR_PASSWORD_HASH": "", "TESTING": "True", "FLASK_ENV": ""}, clear=False):
+            self.assertEqual(get_operator_password_hash(), "")
+
+    def test_14_session_cookie_secure_production_default(self):
+        """SESSION_COOKIE_SECURE defaults to True in production and False in testing."""
+        # Unset in production -> True
+        with patch.dict(os.environ, {"SESSION_COOKIE_SECURE": "", "TESTING": "False", "FLASK_ENV": ""}, clear=False):
+            self.assertTrue(get_session_cookie_secure())
+
+        # Explicit True/False in production
+        with patch.dict(os.environ, {"SESSION_COOKIE_SECURE": "false", "TESTING": "False", "FLASK_ENV": ""}, clear=False):
+            self.assertFalse(get_session_cookie_secure())
+        with patch.dict(os.environ, {"SESSION_COOKIE_SECURE": "true", "TESTING": "False", "FLASK_ENV": ""}, clear=False):
+            self.assertTrue(get_session_cookie_secure())
+
+        # Unset in testing -> False
+        with patch.dict(os.environ, {"SESSION_COOKIE_SECURE": "", "TESTING": "True", "FLASK_ENV": ""}, clear=False):
+            self.assertFalse(get_session_cookie_secure())
+
+    def test_15_configurable_database_path_creates_parent_directories(self):
+        """Configurable DATABASE environment path automatically creates missing parent directories on init_db()."""
+        tmp_dir = tempfile.mkdtemp(prefix="render_disk_unit_test_")
+        try:
+            custom_db = os.path.join(tmp_dir, "var", "data", "bharattrip.db")
+            self.assertFalse(os.path.exists(os.path.dirname(custom_db)))
+
+            original_db = app.config.get("DATABASE")
+            app.config["DATABASE"] = custom_db
+            try:
+                with app.app_context():
+                    init_db()
+                self.assertTrue(os.path.exists(os.path.dirname(custom_db)))
+                self.assertTrue(os.path.exists(custom_db))
+
+                # Verify tables were created
+                conn = sqlite3.connect(custom_db)
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = [r[0] for r in cursor.fetchall()]
+                conn.close()
+                self.assertIn("refund_records", tables)
+                self.assertIn("intake_records", tables)
+            finally:
+                if original_db:
+                    app.config["DATABASE"] = original_db
+        finally:
+            import shutil
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

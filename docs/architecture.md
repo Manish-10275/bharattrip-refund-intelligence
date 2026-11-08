@@ -119,5 +119,18 @@ The SQLite schema consists of seven relational tables:
 - **Cryptographic Secret Enforcement:** `config.py` enforces a non-empty `SECRET_KEY` in non-testing environments. Application startup fails with a `RuntimeError` if missing.
 - **Session Authentication:** All operational endpoints require an authenticated operator session verified via `@login_required`.
 - **CSRF Defense:** All mutating requests (`POST /login`, `POST /logout`, `POST /intake`, `POST /reconciliation/run`) require valid CSRF tokens via Flask-WTF.
-- **Cookie Security:** `SESSION_COOKIE_HTTPONLY = True`, `SESSION_COOKIE_SAMESITE = 'Lax'`, and configurable `SESSION_COOKIE_SECURE`.
+- **Cookie Security:** `SESSION_COOKIE_HTTPONLY = True`, `SESSION_COOKIE_SAMESITE = 'Lax'`, and production-default `SESSION_COOKIE_SECURE = True`.
+- **Operator Authentication Enforcement:** `OPERATOR_USERNAME` and `OPERATOR_PASSWORD_HASH` are strictly enforced at startup in non-testing environments, failing with `RuntimeError` if missing.
 - **Offline / Mocked Test Isolation:** The automated test suite executes fully offline with mocked Groq fixtures and isolated test secrets without external network requirements.
+
+---
+
+## 5. Production Deployment Architecture (Render)
+
+The application is structured for cloud deployment on platforms like Render using Gunicorn and persistent volume storage:
+
+- **WSGI Application Server:** Gunicorn 21+ (`gunicorn --bind 0.0.0.0:$PORT app:app`) with dynamic `$PORT` binding.
+- **Persistent Storage (Render Disks):** SQLite is mounted on a persistent block storage disk at `/var/data/bharattrip.db` (`DATABASE=/var/data/bharattrip.db`), ensuring imported records, reconciliation history, and AI intake records persist across deploys and container recycles.
+- **Automatic Directory Provisioning:** Application and service connection handlers automatically ensure parent directories (`os.makedirs`) exist before opening database connections.
+- **Automatic Startup Migration:** `app.py` automatically initializes database tables on startup within the persistent disk location.
+- **Declarative Blueprint (`render.yaml`):** Infrastructure-as-code configuration specifying Python runtime, build command, Gunicorn start command, health check route (`/health`), persistent disk mounts, and environment variables.

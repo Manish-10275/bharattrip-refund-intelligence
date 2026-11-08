@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: bharattrip-refund-intelligence
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT app:app
+    healthCheckPath: /health
+    disk:
+      name: bharattrip-disk
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: DATABASE
+        value: /var/data/bharattrip.db
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: TESTING
+        value: "false"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: OPERATOR_USERNAME
+        sync: false
+      - key: OPERATOR_PASSWORD_HASH
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-20b
+      - key: GROQ_REQUEST_TIMEOUT
+        value: "30.0"

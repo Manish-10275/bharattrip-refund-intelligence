@@ -66,6 +66,62 @@ def get_secret_key() -> str:
     )
 
 
+def get_operator_username() -> str:
+    """
+    Load OPERATOR_USERNAME from the environment.
+    - If present, returns the configured operator username.
+    - If absent in an explicitly identified testing environment, returns a default test operator username ('operator').
+    - If absent in a non-testing environment, raises a clear RuntimeError.
+    """
+    user = os.environ.get("OPERATOR_USERNAME")
+    if user and user.strip():
+        return user.strip()
+
+    if is_testing_environment():
+        return "operator"
+
+    raise RuntimeError(
+        "FATAL: OPERATOR_USERNAME environment variable is not set. "
+        "A designated operator username is required for application startup in non-testing environments. "
+        "Configure OPERATOR_USERNAME in your environment or .env file."
+    )
+
+
+def get_operator_password_hash() -> str:
+    """
+    Load OPERATOR_PASSWORD_HASH from the environment.
+    - If present, returns the configured password hash.
+    - If absent in an explicitly identified testing environment, returns an empty string (tests configure test hashes).
+    - If absent in a non-testing environment, raises a clear RuntimeError.
+    """
+    p_hash = os.environ.get("OPERATOR_PASSWORD_HASH")
+    if p_hash and p_hash.strip():
+        return p_hash.strip()
+
+    if is_testing_environment():
+        return ""
+
+    raise RuntimeError(
+        "FATAL: OPERATOR_PASSWORD_HASH environment variable is not set. "
+        "A secure password hash is required for application startup in non-testing environments. "
+        "Generate a password hash with: python -c \"from werkzeug.security import generate_password_hash; print(generate_password_hash('YourPassword'))\" "
+        "and configure OPERATOR_PASSWORD_HASH in your environment or .env file."
+    )
+
+
+def get_session_cookie_secure() -> bool:
+    """
+    Determine SESSION_COOKIE_SECURE.
+    - Defaults to True in production (non-testing) environments.
+    - Defaults to False in testing environments.
+    - Respects explicit boolean string values from SESSION_COOKIE_SECURE environment variable.
+    """
+    raw = os.environ.get("SESSION_COOKIE_SECURE")
+    if raw is None or not str(raw).strip():
+        return not is_testing_environment()
+    return parse_bool(raw, default=not is_testing_environment())
+
+
 class Config:
     """Application configuration for BharatTrip Refund Intelligence."""
     APP_NAME = os.environ.get("APP_NAME", "BharatTrip Refund Intelligence")
@@ -79,14 +135,29 @@ class Config:
         return get_secret_key()
 
     # Operator Authentication Credentials (from environment only)
-    OPERATOR_USERNAME = os.environ.get("OPERATOR_USERNAME", "")
-    OPERATOR_PASSWORD_HASH = os.environ.get("OPERATOR_PASSWORD_HASH", "")
+    OPERATOR_USERNAME = get_operator_username()
+    OPERATOR_PASSWORD_HASH = get_operator_password_hash()
+
+    @classmethod
+    def load_operator_username(cls) -> str:
+        """Retrieve the validated operator username."""
+        return get_operator_username()
+
+    @classmethod
+    def load_operator_password_hash(cls) -> str:
+        """Retrieve the validated operator password hash."""
+        return get_operator_password_hash()
 
     # Security & Session Cookie Hardening
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
-    SESSION_COOKIE_SECURE = parse_bool(os.environ.get("SESSION_COOKIE_SECURE"), default=False)
+    SESSION_COOKIE_SECURE = get_session_cookie_secure()
     PERMANENT_SESSION_LIFETIME = 3600
+
+    @classmethod
+    def load_session_cookie_secure(cls) -> bool:
+        """Retrieve the validated session cookie secure setting."""
+        return get_session_cookie_secure()
 
     # CSRF Protection (Flask-WTF)
     WTF_CSRF_ENABLED = parse_bool(os.environ.get("WTF_CSRF_ENABLED"), default=True)
@@ -94,8 +165,8 @@ class Config:
 
     DATABASE = os.environ.get("DATABASE", "bharattrip.db")
     DEBUG = parse_bool(os.environ.get("FLASK_DEBUG"), default=False)
-    HOST = os.environ.get("FLASK_RUN_HOST", "127.0.0.1")
-    PORT = int(os.environ.get("FLASK_RUN_PORT", 5000))
+    HOST = os.environ.get("FLASK_RUN_HOST", "0.0.0.0" if os.environ.get("RENDER") else "127.0.0.1")
+    PORT = int(os.environ.get("PORT", os.environ.get("FLASK_RUN_PORT", 5000)))
 
     # Groq AI Intake Service Configuration
     GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
