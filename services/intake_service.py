@@ -2,6 +2,7 @@ import json
 import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple
+from flask import has_app_context, current_app
 
 from db import DatabaseConnection, DatabaseOperationalError, get_connection as db_get_connection, init_all_schemas
 from services.intake_schema import RefundIntakeExtraction
@@ -18,12 +19,20 @@ class IntakeService:
     of Finance or Support operational tables.
     """
 
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: Optional[str] = None, database_url: Optional[str] = None):
         self.db_path = db_path
+        self.database_url = database_url
 
     def get_connection(self) -> DatabaseConnection:
         """Create a connection to the database (PostgreSQL if configured, else SQLite)."""
-        return db_get_connection(db_path=self.db_path)
+        db_url = self.database_url
+        db_path = self.db_path
+        if has_app_context():
+            if db_url is None:
+                db_url = current_app.config.get("DATABASE_URL")
+            if db_path is None:
+                db_path = current_app.config.get("DATABASE")
+        return db_get_connection(db_path=db_path, database_url=db_url)
 
     def init_schema(self, conn: Optional[DatabaseConnection] = None) -> None:
         """Idempotently initialize the intake_records table and indexes."""

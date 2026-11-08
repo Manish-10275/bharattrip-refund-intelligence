@@ -6,6 +6,7 @@ import warnings
 from typing import Any, Dict, List, Optional
 import openpyxl
 import pandas as pd
+from flask import has_app_context, current_app
 
 from db import DatabaseConnection, get_connection as db_get_connection, init_all_schemas
 
@@ -93,7 +94,14 @@ class DataService:
 
     def get_connection(self) -> DatabaseConnection:
         """Create a connection to the database (PostgreSQL if configured, else SQLite)."""
-        return db_get_connection(db_path=self.db_path, database_url=self.database_url)
+        db_url = self.database_url
+        db_path = self.db_path
+        if has_app_context():
+            if db_url is None:
+                db_url = current_app.config.get("DATABASE_URL")
+            if db_path is None:
+                db_path = current_app.config.get("DATABASE")
+        return db_get_connection(db_path=db_path, database_url=db_url)
 
     def init_schema(self, conn: Optional[DatabaseConnection] = None) -> None:
         """Create required tables for data ingestion if they do not exist."""
@@ -199,6 +207,16 @@ class DataService:
             if existing and force:
                 old_id = existing["id"]
                 with conn:
+                    conn.execute("""
+                        UPDATE reconciliation_results 
+                        SET support_record_id = NULL 
+                        WHERE support_record_id IN (SELECT id FROM support_records WHERE import_id = ?)
+                    """, (old_id,))
+                    conn.execute("""
+                        UPDATE reconciliation_results 
+                        SET finance_record_id = NULL 
+                        WHERE finance_record_id IN (SELECT id FROM finance_records WHERE import_id = ?)
+                    """, (old_id,))
                     conn.execute("DELETE FROM support_records WHERE import_id = ?", (old_id,))
                     conn.execute("DELETE FROM finance_records WHERE import_id = ?", (old_id,))
                     conn.execute("DELETE FROM escalation_records WHERE import_id = ?", (old_id,))

@@ -58,6 +58,21 @@ class TestPostgreSQLLayer(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         app.config.pop("DATABASE_URL", None)
+        if getattr(cls, "postgres_available", False):
+            try:
+                conn = get_connection(database_url=POSTGRES_TEST_URL)
+                with conn:
+                    conn.execute("DELETE FROM reconciliation_results")
+                    conn.execute("DELETE FROM reconciliation_runs")
+                    conn.execute("DELETE FROM intake_records")
+                    conn.execute("DELETE FROM refund_records")
+                    conn.execute("DELETE FROM support_records")
+                    conn.execute("DELETE FROM finance_records")
+                    conn.execute("DELETE FROM escalation_records")
+                    conn.execute("DELETE FROM import_history")
+                conn.close()
+            except Exception:
+                pass
 
     def setUp(self):
         """Clean PostgreSQL test tables before each test."""
@@ -369,13 +384,266 @@ class TestPostgreSQLLayer(unittest.TestCase):
         app.config["DATABASE_URL"] = POSTGRES_TEST_URL
         try:
             client = app.test_client()
-            with patch("db.get_db", return_value=self.conn):
-                response = client.get("/health")
-                self.assertEqual(response.status_code, 200)
-                data = response.get_json()
-                self.assertEqual(data["status"], "healthy")
-                self.assertEqual(data["database"], "connected")
-                self.assertEqual(data["runtime"], "python-flask-postgresql")
+            response = client.get("/health")
+            self.assertEqual(response.status_code, 200)
+            data = response.get_json()
+            self.assertEqual(data["status"], "healthy")
+            self.assertEqual(data["database"], "connected")
+            self.assertEqual(data["runtime"], "python-flask-postgresql")
+        finally:
+            if orig_url is not None:
+                app.config["DATABASE_URL"] = orig_url
+            else:
+                app.config.pop("DATABASE_URL", None)
+
+    # --------------------------------------------------------------------------
+    # 10. Flask Service Singletons Database Routing
+    # --------------------------------------------------------------------------
+
+    def test_11_flask_service_singletons_use_postgresql(self):
+        """Verify the actual service singletons used by Flask use PostgreSQL when DATABASE_URL is configured."""
+        from app import reconciliation_service as app_rec, data_service as app_data, intake_service as app_intake, get_db
+
+        app.config["TESTING"] = True
+        orig_url = app.config.get("DATABASE_URL")
+        app.config["DATABASE_URL"] = POSTGRES_TEST_URL
+        try:
+            with app.app_context():
+                get_db()
+                c1 = app_rec.get_connection()
+                self.assertEqual(c1.dialect, "postgresql")
+                c1.close()
+
+                c2 = app_data.get_connection()
+                self.assertEqual(c2.dialect, "postgresql")
+                c2.close()
+
+                c3 = app_intake.get_connection()
+                self.assertEqual(c3.dialect, "postgresql")
+                c3.close()
+
+                # Verify get_latest_run, run_reconciliation, get_results use PostgreSQL
+                latest = app_rec.get_latest_run()
+                self.assertIsNone(latest)
+                results, count = app_rec.get_results()
+                self.assertEqual(count, 0)
+        finally:
+            if orig_url is not None:
+                app.config["DATABASE_URL"] = orig_url
+            else:
+                app.config.pop("DATABASE_URL", None)
+
+    # --------------------------------------------------------------------------
+    # 11. Flask Routes Route-Level Integration on PostgreSQL
+    # --------------------------------------------------------------------------
+
+    def test_12_dashboard_and_reconciliation_routes_use_postgresql(self):
+        """Verify Dashboard (/) and Reconciliation (/reconciliation) render using PostgreSQL data."""
+        # Seed test data into PostgreSQL
+        with self.conn:
+            cur = self.conn.execute(
+                "INSERT INTO import_history (file_name, file_path, file_hash, status) VALUES (?, ?, ?, ?) RETURNING id",
+                ("pg_test.xlsx", "pg_test.xlsx", "hash_pg_routes", "COMPLETED")
+            )
+            import_id = cur.fetchone()[0]
+            self.conn.execute(
+                "INSERT INTO support_records (import_id, row_index, ticket_id, norm_ticket_id, status, refund_amount, route) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (import_id, 0, "RF-9001", "RF-9001", "Closed", 5500.0, "DEL-BOM")
+            )
+            self.conn.execute(
+                "INSERT INTO finance_records (import_id, row_index, ref_no, norm_ref_no, payout_status, amount_paid, processed_on, sector) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (import_id, 0, "RF-9001", "RF-9001", "Refund Done", 5500.0, "2026-03-05", "DEL-BOM")
+            )
+            self.conn.execute(
+                "INSERT INTO escalation_records (import_id, row_index, escalation_id, raised_on, status, related_ticket_ref) VALUES (?, ?, ?, ?, ?, ?)",
+                (import_id, 0, "ESC-1", "2026-03-01", "Open", "RF-9001")
+            )
+
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
+        orig_url = app.config.get("DATABASE_URL")
+        app.config["DATABASE_URL"] = POSTGRES_TEST_URL
+        try:
+            client = app.test_client()
+            with client.session_transaction() as sess:
+                sess["operator_user"] = "operator"
+
+            # 1. GET / (Dashboard)
+            res_dash = client.get("/")
+            self.assertEqual(res_dash.status_code, 200)
+            html_dash = res_dash.data.decode("utf-8")
+            self.assertIn("Operations Dashboard", html_dash)
+            self.assertIn("kpi-pending_support_triage", html_dash)
+
+            # 2. GET /reconciliation
+            res_rec = client.get("/reconciliation")
+            self.assertEqual(res_rec.status_code, 200)
+            html_rec = res_rec.data.decode("utf-8")
+            self.assertIn("Reconciliation", html_rec)
+        finally:
+            if orig_url is not None:
+                app.config["DATABASE_URL"] = orig_url
+            else:
+                app.config.pop("DATABASE_URL", None)
+
+    def test_13_reconciliation_trigger_and_refund_records_on_postgresql(self):
+        """Verify POST /reconciliation/run executes and persists run results in PostgreSQL."""
+        # Seed test data in PostgreSQL
+        with self.conn:
+            cur = self.conn.execute(
+                "INSERT INTO import_history (file_name, file_path, file_hash, status) VALUES (?, ?, ?, ?) RETURNING id",
+                ("pg_run.xlsx", "pg_run.xlsx", "hash_pg_run_trigger", "COMPLETED")
+            )
+            import_id = cur.fetchone()[0]
+            self.conn.execute(
+                "INSERT INTO support_records (import_id, row_index, ticket_id, norm_ticket_id, status, refund_amount, route) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (import_id, 0, "RF-7701", "RF-7701", "Closed", 2500.0, "BOM-GOI")
+            )
+            self.conn.execute(
+                "INSERT INTO finance_records (import_id, row_index, ref_no, norm_ref_no, payout_status, amount_paid, processed_on, sector) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (import_id, 0, "RF-7701", "RF-7701", "Refund Done", 2500.0, "2026-03-05", "BOM-GOI")
+            )
+
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
+        orig_url = app.config.get("DATABASE_URL")
+        app.config["DATABASE_URL"] = POSTGRES_TEST_URL
+        try:
+            client = app.test_client()
+            with client.session_transaction() as sess:
+                sess["operator_user"] = "operator"
+
+            # Execute POST /reconciliation/run
+            res_post = client.post("/reconciliation/run", follow_redirects=True)
+            self.assertEqual(res_post.status_code, 200)
+
+            # Verify runs and results exist in PostgreSQL
+            cur = self.conn.execute("SELECT COUNT(*) FROM reconciliation_runs WHERE status = 'COMPLETED'")
+            self.assertGreater(cur.fetchone()[0], 0)
+
+            cur = self.conn.execute("SELECT COUNT(*) FROM reconciliation_results WHERE norm_reference = 'RF-7701'")
+            self.assertGreater(cur.fetchone()[0], 0)
+
+            # GET /refund-records
+            res_refunds = client.get("/refund-records")
+            self.assertEqual(res_refunds.status_code, 200)
+            self.assertIn("Refund Records", res_refunds.data.decode("utf-8"))
+        finally:
+            if orig_url is not None:
+                app.config["DATABASE_URL"] = orig_url
+            else:
+                app.config.pop("DATABASE_URL", None)
+
+    def test_14_ai_intake_persistence_and_review_on_postgresql(self):
+        """Verify AI intake submission and review queue actions execute on PostgreSQL."""
+        mock_extraction = RefundIntakeExtraction(
+            customer_name="Pooja Mehta",
+            agency_name="MakeMyTrip",
+            booking_reference="BT-3344",
+            refund_reference="RF-3344",
+            route="DEL-BOM",
+            refund_amount=6000.0,
+            currency="INR",
+            request_date="2026-03-01",
+            complaint_category=ComplaintCategory.REFUND_STATUS,
+            missing_information=[],
+            summary="Customer inquiry for cancelled flight.",
+            confidence=0.92,
+            human_review_required=True,
+            human_review_reason="Manual verification required for cancellation dispute."
+        )
+
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
+        orig_url = app.config.get("DATABASE_URL")
+        app.config["DATABASE_URL"] = POSTGRES_TEST_URL
+        try:
+            client = app.test_client()
+            with client.session_transaction() as sess:
+                sess["operator_user"] = "operator"
+
+            # Submit intake message
+            post_data = {
+                "customer_message": "My flight from Delhi to Mumbai booking RF-3344 was cancelled. Please process refund of 6000 INR.",
+                "source_channel": "Email"
+            }
+            with patch("app.analyze_refund_message", return_value=mock_extraction):
+                res_intake = client.post("/intake", data=post_data, follow_redirects=True)
+                self.assertEqual(res_intake.status_code, 200)
+
+            # Check PostgreSQL table intake_records
+            cur = self.conn.execute("SELECT id, processing_status FROM intake_records ORDER BY id DESC LIMIT 1")
+            row = cur.fetchone()
+            self.assertIsNotNone(row)
+            intake_id = row["id"]
+            self.assertEqual(row["processing_status"], "PENDING_REVIEW")
+
+            # Transition via review route
+            res_review = client.post(f"/intake/{intake_id}/review", follow_redirects=True)
+            self.assertEqual(res_review.status_code, 200)
+
+            cur = self.conn.execute("SELECT processing_status, reviewed_by FROM intake_records WHERE id = ?", (intake_id,))
+            updated_row = cur.fetchone()
+            self.assertEqual(updated_row["processing_status"], "REVIEWED")
+            self.assertEqual(updated_row["reviewed_by"], "operator")
+        finally:
+            if orig_url is not None:
+                app.config["DATABASE_URL"] = orig_url
+            else:
+                app.config.pop("DATABASE_URL", None)
+
+    def test_15_no_production_route_silently_falls_back_to_sqlite(self):
+        """Verify that when DATABASE_URL is set, queries are strictly handled by PostgreSQL without fallback to SQLite."""
+        # Ensure a base record exists in PostgreSQL
+        with self.conn:
+            cur = self.conn.execute(
+                "INSERT INTO import_history (file_name, file_path, file_hash, status) VALUES (?, ?, ?, ?) RETURNING id",
+                ("pg_fallback_check.xlsx", "pg_fallback_check.xlsx", "hash_pg_fallback_check", "COMPLETED")
+            )
+            import_id = cur.fetchone()[0]
+            self.conn.execute(
+                "INSERT INTO support_records (import_id, row_index, ticket_id, norm_ticket_id, status, refund_amount, route) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (import_id, 0, "RF-9999", "RF-9999", "Closed", 1000.0, "DEL-BOM")
+            )
+            self.conn.execute(
+                "INSERT INTO finance_records (import_id, row_index, ref_no, norm_ref_no, payout_status, amount_paid, processed_on, sector) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (import_id, 0, "RF-9999", "RF-9999", "Refund Done", 1000.0, "2026-03-05", "DEL-BOM")
+            )
+
+        app.config["TESTING"] = True
+        orig_url = app.config.get("DATABASE_URL")
+        orig_db = app.config.get("DATABASE")
+        app.config["DATABASE_URL"] = POSTGRES_TEST_URL
+        try:
+            client = app.test_client()
+            with client.session_transaction() as sess:
+                sess["operator_user"] = "operator"
+
+            # Point app.config["DATABASE"] to an empty temporary SQLite file path
+            import tempfile, sqlite3
+            tmp_fd, tmp_db = tempfile.mkstemp(suffix=".db")
+            os.close(tmp_fd)
+            app.config["DATABASE"] = tmp_db
+            try:
+                # Visit all primary routes
+                for route in ["/", "/reconciliation", "/refund-records", "/escalations", "/assistant", "/intake", "/intake/review", "/health"]:
+                    res = client.get(route)
+                    self.assertIn(res.status_code, (200, 302), f"Route {route} failed with {res.status_code}")
+
+                # Verify tmp_db file was never written to (0 tables)
+                if os.path.exists(tmp_db) and os.path.getsize(tmp_db) > 0:
+                    c = sqlite3.connect(tmp_db)
+                    tables = [r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+                    c.close()
+                    self.assertEqual(len(tables), 0, "No tables should be created in SQLite when DATABASE_URL is active")
+            finally:
+                if orig_db is not None:
+                    app.config["DATABASE"] = orig_db
+                if os.path.exists(tmp_db):
+                    try:
+                        os.unlink(tmp_db)
+                    except Exception:
+                        pass
         finally:
             if orig_url is not None:
                 app.config["DATABASE_URL"] = orig_url

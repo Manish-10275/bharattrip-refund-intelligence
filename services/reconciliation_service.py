@@ -3,6 +3,7 @@ import os
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from flask import has_app_context, current_app
 
 from db import DatabaseConnection, get_connection as db_get_connection, init_all_schemas
 
@@ -43,7 +44,14 @@ class ReconciliationService:
 
     def get_connection(self) -> DatabaseConnection:
         """Create a connection to the database (PostgreSQL if configured, else SQLite)."""
-        return db_get_connection(db_path=self.db_path, database_url=self.database_url)
+        db_url = self.database_url
+        db_path = self.db_path
+        if has_app_context():
+            if db_url is None:
+                db_url = current_app.config.get("DATABASE_URL")
+            if db_path is None:
+                db_path = current_app.config.get("DATABASE")
+        return db_get_connection(db_path=db_path, database_url=db_url)
 
     def init_schema(self, conn: Optional[DatabaseConnection] = None) -> None:
         """Initialize reconciliation_runs and reconciliation_results tables."""
@@ -484,8 +492,9 @@ class ReconciliationService:
             logger.info(f"Reconciliation run {run_id} completed: {len(results)} total candidates, {review_count} require review.")
 
             return {
-                "status": "SUCCESS",
+                "id": run_id,
                 "run_id": run_id,
+                "status": "SUCCESS",
                 "total_candidates": len(results),
                 "matched_count": counts[ReconciliationClassification.MATCHED],
                 "status_mismatch_count": counts[ReconciliationClassification.STATUS_MISMATCH],

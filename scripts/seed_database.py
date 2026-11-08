@@ -16,6 +16,7 @@ Usage:
 
 import argparse
 import os
+import re
 import sys
 
 # Ensure repository root is on sys.path
@@ -27,8 +28,15 @@ from services.data_service import DataService
 from services.reconciliation_service import ReconciliationService
 
 
+def sanitize_log(message: str) -> str:
+    """Mask any passwords embedded in connection strings or exception messages."""
+    if not message:
+        return ""
+    return re.sub(r":([^@/]+)@", r":***@", str(message))
+
+
 def seed_database(database_url: str = None, excel_path: str = None, run_rec: bool = True) -> bool:
-    target_url = normalize_database_url(database_url or Config.get_database_url())
+    target_url = normalize_database_url(database_url or Config.load_database_url())
     excel_file = excel_path or os.path.join(os.path.dirname(__file__), "..", "BharatTrip_Refund_Data.xlsx")
     excel_file = os.path.abspath(excel_file)
 
@@ -92,7 +100,8 @@ def main():
         )
         sys.exit(0 if success else 1)
     except Exception as e:
-        print(f"\n[ERROR] Database seeding failed: {e}", file=sys.stderr)
+        clean_err = sanitize_log(str(e))
+        print(f"\n[ERROR] Database seeding failed: {clean_err}", file=sys.stderr)
         sys.exit(1)
 
 

@@ -29,14 +29,24 @@ from services.groq_service import (
 app = Flask(__name__)
 app.config.from_object(Config)
 app.config["SECRET_KEY"] = Config.load_secret_key()
+app.config["DATABASE_URL"] = Config.load_database_url()
 
 # Enable CSRF protection for all state-changing requests
 csrf = CSRFProtect(app)
 
-# Initialize data, reconciliation, and intake services
-data_service = DataService(db_path=app.config["DATABASE"])
-reconciliation_service = ReconciliationService(db_path=app.config["DATABASE"])
-intake_service = IntakeService(db_path=app.config["DATABASE"])
+# Initialize data, reconciliation, and intake services with active database config
+data_service = DataService(
+    db_path=app.config.get("DATABASE"),
+    database_url=app.config.get("DATABASE_URL")
+)
+reconciliation_service = ReconciliationService(
+    db_path=app.config.get("DATABASE"),
+    database_url=app.config.get("DATABASE_URL")
+)
+intake_service = IntakeService(
+    db_path=app.config.get("DATABASE"),
+    database_url=app.config.get("DATABASE_URL")
+)
 
 
 # ==============================================================================
@@ -66,12 +76,27 @@ def login_required(f):
 # Database Layer (PostgreSQL / Neon in production, SQLite in local dev/testing)
 # ==============================================================================
 
+def sync_service_configs():
+    """Synchronize service database configurations with current app config."""
+    db_url = app.config.get("DATABASE_URL")
+    db_path = app.config.get("DATABASE", "bharattrip.db")
+    data_service.database_url = db_url
+    data_service.db_path = db_path
+    reconciliation_service.database_url = db_url
+    reconciliation_service.db_path = db_path
+    intake_service.database_url = db_url
+    intake_service.db_path = db_path
+
+
+@app.before_request
+def before_request_sync():
+    """Ensure service singletons reflect the active app database config on each request."""
+    sync_service_configs()
+
+
 def get_db():
     """Get or create an application-context DatabaseConnection."""
-    # Sync service database paths/configs with active app configuration if changed
-    data_service.db_path = app.config.get("DATABASE", "bharattrip.db")
-    reconciliation_service.db_path = app.config.get("DATABASE", "bharattrip.db")
-    intake_service.db_path = app.config.get("DATABASE", "bharattrip.db")
+    sync_service_configs()
     return db_get_db()
 
 
@@ -286,6 +311,7 @@ def reconciliation_view():
     summary = reconciliation_service.get_latest_run()
     if not summary:
         summary = reconciliation_service.run_reconciliation("Auto initial reconciliation run")
+    run_id = summary.get("id") or summary.get("run_id")
 
     # Read filter query parameters
     classification = request.args.get("classification", "ALL")
@@ -302,7 +328,7 @@ def reconciliation_view():
         review_filter = False
 
     results, total_count = reconciliation_service.get_results(
-        run_id=summary["id"],
+        run_id=run_id,
         classification=classification,
         review_required=review_filter,
         search_query=search_query,
@@ -733,7 +759,7 @@ def refund_records_view():
     summary = reconciliation_service.get_latest_run()
     if not summary:
         summary = reconciliation_service.run_reconciliation("Auto initial reconciliation run")
-    run_id = summary["id"]
+    run_id = summary.get("id") or summary.get("run_id")
 
     # Overall totals for the latest run
     cursor.execute("SELECT COUNT(*) FROM reconciliation_results WHERE run_id = ?", (run_id,))

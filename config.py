@@ -193,6 +193,11 @@ class Config:
         """Retrieve the normalized DATABASE_URL."""
         return get_database_url()
 
+    @classmethod
+    def get_database_url(cls) -> str:
+        """Alias for load_database_url for backward compatibility."""
+        return get_database_url()
+
     DEBUG = parse_bool(os.environ.get("FLASK_DEBUG"), default=False)
     HOST = os.environ.get("FLASK_RUN_HOST", "0.0.0.0" if os.environ.get("RENDER") else "127.0.0.1")
     PORT = int(os.environ.get("PORT", os.environ.get("FLASK_RUN_PORT", 5000)))
