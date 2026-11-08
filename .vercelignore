@@ -1,0 +1,39 @@
+# Git & GitHub
+.git
+.github
+.gitignore
+
+# Python virtual environment & cache
+.venv
+venv
+ENV/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# Tests & verification scripts
+tests/
+test_*.py
+
+# Local SQLite databases & cache
+*.db
+*.sqlite
+*.sqlite3
+
+# Spreadsheets, binaries & submission archives
+*.xlsx
+*.xls
+*.pdf
+*.zip
+
+# Secrets & Environment variables
+.env
+.env.*
+!.env.example
+
+# Submission bundles & scratch directories
+submission/
+scratch/
+.system_generated/

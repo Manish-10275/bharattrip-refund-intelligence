@@ -1,12 +1,18 @@
 import math
 import os
-import sqlite3
 from functools import wraps
 from urllib.parse import urlparse
 from flask import Flask, render_template, request, redirect, url_for, jsonify, g, session
 from flask_wtf.csrf import CSRFProtect
 from werkzeug.security import check_password_hash
 from config import Config
+from db import (
+    get_db as db_get_db,
+    close_db as db_close_db,
+    init_all_schemas,
+    DatabaseOperationalError,
+    get_database_backend,
+)
 from services.data_service import DataService
 from services.reconciliation_service import ReconciliationService, ReconciliationClassification
 from services.intake_service import IntakeService
@@ -57,68 +63,35 @@ def login_required(f):
 
 
 # ==============================================================================
-# SQLite Database Utilities (built-in sqlite3, lightweight & zero overhead)
+# Database Layer (PostgreSQL / Neon in production, SQLite in local dev/testing)
 # ==============================================================================
 
 def get_db():
-    """
-    Get or create an application-context SQLite database connection.
-    Uses sqlite3.Row for dictionary-like column access.
-    Automatically ensures the directory for configurable database paths exists.
-    """
-    if "db" not in g:
-        db_path = app.config.get("DATABASE", "bharattrip.db")
-        db_dir = os.path.dirname(os.path.abspath(db_path))
-        if db_dir and not os.path.exists(db_dir):
-            os.makedirs(db_dir, exist_ok=True)
-        g.db = sqlite3.connect(db_path)
-        g.db.row_factory = sqlite3.Row
-    return g.db
+    """Get or create an application-context DatabaseConnection."""
+    # Sync service database paths/configs with active app configuration if changed
+    data_service.db_path = app.config.get("DATABASE", "bharattrip.db")
+    reconciliation_service.db_path = app.config.get("DATABASE", "bharattrip.db")
+    intake_service.db_path = app.config.get("DATABASE", "bharattrip.db")
+    return db_get_db()
 
 
 @app.teardown_appcontext
 def close_db(error=None):
     """Close the database connection at the end of the request."""
-    db = g.pop("db", None)
-    if db is not None:
-        db.close()
+    db_close_db(error)
 
 
 def init_db():
-    """Initialize SQLite tables for application and data ingestion."""
-    db_path = app.config.get("DATABASE", "bharattrip.db")
-    db_dir = os.path.dirname(os.path.abspath(db_path))
-    if db_dir and not os.path.exists(db_dir):
-        os.makedirs(db_dir, exist_ok=True)
-
-    # Sync service database paths with the active configuration
-    data_service.db_path = db_path
-    reconciliation_service.db_path = db_path
-    intake_service.db_path = db_path
-
-    db = get_db()
-    db.execute("""
-        CREATE TABLE IF NOT EXISTS refund_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            booking_reference TEXT NOT NULL,
-            customer_name TEXT NOT NULL,
-            travel_agency TEXT,
-            route TEXT,
-            refund_amount REAL,
-            request_date TEXT,
-            status TEXT DEFAULT 'PENDING',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    db.commit()
-    data_service.init_schema(db)
-    reconciliation_service.init_schema(db)
-    intake_service.init_schema(db)
+    """Initialize database tables for application and data ingestion."""
+    init_all_schemas(get_db())
 
 
-# Initialize database schema automatically upon startup (supports Gunicorn workers & persistent disks)
-with app.app_context():
-    init_db()
+# Safely attempt database initialization at startup without failing if DB is not yet available
+try:
+    with app.app_context():
+        init_db()
+except Exception as _e:
+    app.logger.warning(f"Startup database schema initialization deferred: {_e}")
 
 
 # ==============================================================================
@@ -190,7 +163,7 @@ def dashboard():
         cursor.execute("SELECT COUNT(*) FROM support_records")
         support_total = cursor.fetchone()[0]
         has_support = support_total > 0
-    except sqlite3.OperationalError:
+    except DatabaseOperationalError:
         has_support = False
 
     if has_support:
@@ -769,7 +742,7 @@ def refund_records_view():
     cursor.execute("SELECT COUNT(*) FROM reconciliation_results WHERE run_id = ? AND classification = 'MATCHED'", (run_id,))
     matched_count = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM reconciliation_results WHERE run_id = ? AND review_required = 1", (run_id,))
+    cursor.execute("SELECT COUNT(*) FROM reconciliation_results WHERE run_id = ? AND review_required IS TRUE", (run_id,))
     review_required_count = cursor.fetchone()[0]
 
     # Filters
@@ -915,7 +888,7 @@ def health():
         "status": "healthy" if db_status == "connected" else "degraded",
         "service": app.config.get("APP_NAME", "BharatTrip Refund Intelligence"),
         "database": db_status,
-        "runtime": "python-flask-sqlite"
+        "runtime": f"python-flask-{get_database_backend(app.config.get('DATABASE_URL'))}"
     }), (200 if db_status == "connected" else 503)
 
 

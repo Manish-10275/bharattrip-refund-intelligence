@@ -1,12 +1,12 @@
 # BharatTrip Refund Intelligence — Architecture Specification
 
-This document details the software architecture, core services, database schemas, and integration patterns for the BharatTrip Refund Intelligence operational prototype.
+This document details the software architecture, core services, database schemas, central database layer, and deployment patterns for the BharatTrip Refund Intelligence operational platform.
 
 ---
 
 ## 1. System Overview & Component Diagram
 
-The platform is designed as an operational prototype and triage system built on Flask 3.1, SQLite 3, Pydantic 2, and Groq SDK.
+The platform is an operational prototype and triage system designed for B2B flight refund management, deterministic cross-departmental reconciliation, dispute tracking, and structured customer message intake.
 
 ```
                            +----------------------------------------+
@@ -31,29 +31,40 @@ The platform is designed as an operational prototype and triage system built on 
              |                     +--------------------------------+
              v                                     |
 +-------------------------------------------------------------------+
-|               SQLite Core Database (refund_intelligence.db)       |
-|  - import_history       - reconciliation_runs   - intake_records  |
-|  - support_records      - reconciliation_results                  |
-|  - finance_records      - escalation_records                      |
+|               Central Database Abstraction Layer (db.py)           |
+|   - Transparent Query Parameter Translation (? -> %s)             |
+|   - Dual-Access Case-Insensitive RowWrapper (row["col"] & row[0]) |
+|   - Request-Scoped Connection Lifecycle (get_db / close_db)       |
+|   - Dialect-Aware DDL (PostgreSQL Identity vs SQLite Autoinc)     |
 +-------------------------------------------------------------------+
-                                   |
-                                   v
+             |                                     |
+             v (Production)                        v (Local / Test)
++--------------------------+       +--------------------------------+
+|   Neon PostgreSQL (v16+) |       |       SQLite 3 Database        |
+|  - Serverless Pooler     |       |  - Local developer speed       |
+|  - sslmode=require       |       |  - Offline automated tests     |
++--------------------------+       +--------------------------------+
+             |                                     |
+             +------------------+------------------+
+                                |
+                                v
              +-------------------------------------------+
              |    Deterministic Reconciliation Engine    |
              |    - 7 Mutually Exclusive Outcomes        |
              |    - Payout vs Non-Payout Corroboration   |
              |    - Ambiguity & Dispute Detection        |
              +-------------------------------------------+
-                                   |
-                                   v
+                                |
+                                v
              +-------------------------------------------+
-             |         Web Operations Interface          |
+             |      Vercel Serverless Web Interface      |
              |  - Operations Dashboard (/)               |
              |  - Dispute Escalations (/escalations)     |
              |  - Reconciliation Ledger (/reconciliation)|
-             |  - Correlated Refund Records (/refund-records)
+             |  - Refund Records Ledger (/refund-records)|
              |  - Operations Assistant (/assistant)      |
              |  - Session Auth & CSRF Protection         |
+             |  - Edge Static Asset Serving (/static)    |
              +-------------------------------------------+
 ```
 
@@ -100,21 +111,48 @@ The platform is designed as an operational prototype and triage system built on 
 
 ---
 
-## 3. Database Schema
+## 3. Central Database Layer (`db.py`)
 
-The SQLite schema consists of seven relational tables:
+To eliminate driver lock-in and enable frictionless deployment across serverless cloud environments (Vercel + Neon) and local development (SQLite), BharatTrip features a centralized database layer:
 
-1. **`import_history`**: Tracks workbook SHA-256 hashes, file names, row counts, and ingestion timestamps.
-2. **`support_records`**: Ingested Support tickets with normalized `norm_ticket_id`, route, claimed amount, request date, status, agent, and channel.
-3. **`finance_records`**: Ingested Finance disbursements with normalized `norm_ref_no`, amount paid, deduction, processed date, and payout status.
-4. **`escalation_records`**: Ingested agency dispute escalations with related ticket reference, raised date, team, channel, complaint, status, and resolution date.
-5. **`reconciliation_runs`**: Header table storing run timestamp, total candidates, classification counts, and review metrics.
-6. **`reconciliation_results`**: Individual candidate evaluation units linked to run ID, support record ID, finance record ID, classification tag, and reason.
-7. **`intake_records`**: Inbound AI-triaged messages with raw customer text, validated JSON, extracted entities, confidence, review flags, and audit sign-offs.
+### 3.1 Transparent Query Translation
+Existing SQL queries written with SQLite-style positional `?` parameter placeholders are dynamically translated at execution time into PostgreSQL-compatible `%s` placeholders via `translate_query_for_postgres()`. The regex parser preserves literal question marks inside single-quoted strings.
+
+### 3.2 Dual-Access `RowWrapper`
+PostgreSQL dictionaries and SQLite row objects exhibit subtle behavioral differences. `RowWrapper` wraps records returned from both drivers to guarantee identical interfaces:
+- **Case-Insensitive Column Access:** `row["norm_ticket_id"]` and `row["NORM_TICKET_ID"]`.
+- **Positional Integer Indexing:** `row[0]`, `row[1]`.
+- **Standard Dictionary Methods:** `row.get("key", default)`, `dict(row)`, and `'key' in row`.
+
+### 3.3 Serverless Connection Lifecycle (`get_db` & `close_db`)
+Serverless platforms like Vercel create ephemeral function invocations. To prevent connection pool exhaustion against Neon:
+- `get_db()` attaches a single database connection to Flask's application context (`flask.g.db`).
+- `close_db()` is registered with `@app.teardown_appcontext` to guarantee the connection is closed and returned to Neon's PgBouncer pool immediately after request completion.
+- Startup schema initialization (`init_db()`) is wrapped defensively to prevent module import failures if credentials are not injected during Vercel build stages.
+
+### 3.4 Transaction Management
+`DatabaseConnection` provides standard Python context manager semantics (`with conn:`):
+- Automatically manages transactions across both drivers.
+- In PostgreSQL, manages savepoints and commits explicitly upon normal block exit, rolling back on unhandled exceptions.
 
 ---
 
-## 4. Security & Compliance Architecture
+## 4. Database Schema
+
+The database consists of eight relational tables:
+
+1. **`refund_records`**: Core ledger table tracking correlated refund cases, customer names, travel agencies, routes, and amounts.
+2. **`import_history`**: Tracks workbook SHA-256 hashes, file names, row counts, and ingestion timestamps.
+3. **`support_records`**: Ingested Support tickets with normalized `norm_ticket_id`, route, claimed amount, request date, status, agent, and channel.
+4. **`finance_records`**: Ingested Finance disbursements with normalized `norm_ref_no`, amount paid, deduction, processed date, and payout status.
+5. **`escalation_records`**: Ingested agency dispute escalations with related ticket reference, raised date, team, channel, complaint, status, and resolution date.
+6. **`reconciliation_runs`**: Header table storing run timestamp, total candidates, classification counts, and review metrics.
+7. **`reconciliation_results`**: Individual candidate evaluation units linked to run ID, support record ID, finance record ID, classification tag, and reason.
+8. **`intake_records`**: Inbound AI-triaged messages with raw customer text, validated JSON, extracted entities, confidence, review flags, and audit sign-offs.
+
+---
+
+## 5. Security & Compliance Architecture
 
 - **Cryptographic Secret Enforcement:** `config.py` enforces a non-empty `SECRET_KEY` in non-testing environments. Application startup fails with a `RuntimeError` if missing.
 - **Session Authentication:** All operational endpoints require an authenticated operator session verified via `@login_required`.
@@ -125,12 +163,20 @@ The SQLite schema consists of seven relational tables:
 
 ---
 
-## 5. Production Deployment Architecture (Render)
+## 6. Production Deployment Architecture (Vercel + Neon)
 
-The application is structured for cloud deployment on platforms like Render using Gunicorn and persistent volume storage:
+The primary production architecture combines **Vercel Serverless Functions** with **Neon Serverless PostgreSQL**:
 
-- **WSGI Application Server:** Gunicorn 21+ (`gunicorn --bind 0.0.0.0:$PORT app:app`) with dynamic `$PORT` binding.
-- **Persistent Storage (Render Disks):** SQLite is mounted on a persistent block storage disk at `/var/data/bharattrip.db` (`DATABASE=/var/data/bharattrip.db`), ensuring imported records, reconciliation history, and AI intake records persist across deploys and container recycles.
-- **Automatic Directory Provisioning:** Application and service connection handlers automatically ensure parent directories (`os.makedirs`) exist before opening database connections.
-- **Automatic Startup Migration:** `app.py` automatically initializes database tables on startup within the persistent disk location.
-- **Declarative Blueprint (`render.yaml`):** Infrastructure-as-code configuration specifying Python runtime, build command, Gunicorn start command, health check route (`/health`), persistent disk mounts, and environment variables.
+### 6.1 Vercel Serverless Runtime
+- **Routing (`vercel.json`):** Dynamic rewrites direct all HTTP application traffic to `app.py`.
+- **Edge Asset Caching:** Static assets located in `public/static/style.css` are served directly by Vercel's global CDN edge, delivering sub-millisecond static file delivery without invoking serverless function executions.
+- **Function Execution:** Python 3.12+ WSGI serverless function with `maxDuration: 60`.
+
+### 6.2 Neon Managed PostgreSQL
+- **Connection Pooling:** Serverless functions connect via Neon's pooled connection endpoint (`ep-*-pooler.neon.tech`), utilizing PgBouncer to manage high-concurrency connection spikes.
+- **SSL Enforcement:** Neon requires encrypted transport; `config.py` automatically normalizes connection strings to include `sslmode=require`.
+- **Schema Migrations:** Initial schema generation (`init_db()`) uses idempotent DDL (`CREATE TABLE IF NOT EXISTS`) and `GENERATED BY DEFAULT AS IDENTITY` primary keys.
+- **One-Off Seeding:** The CLI script `scripts/seed_database.py` enables operators to seed tables, ingest operational workbooks, and run initial reconciliation against Neon remotely.
+
+### 6.3 Secondary Deployment (Render)
+As an alternative single-node deployment, the project retains `render.yaml` for Render Web Services with persistent block storage disks mounted at `/var/data/bharattrip.db`.

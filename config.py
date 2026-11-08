@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from dotenv import load_dotenv
 
 # Load .env before reading environment-based configuration.
@@ -122,6 +122,28 @@ def get_session_cookie_secure() -> bool:
     return parse_bool(raw, default=not is_testing_environment())
 
 
+def normalize_database_url(url: Optional[str]) -> str:
+    """
+    Normalize DATABASE_URL for PostgreSQL (psycopg 3) and Neon pooled connections.
+    - Converts postgres:// to postgresql://
+    - Enforces sslmode=require for Neon hosted endpoints if missing.
+    """
+    if not url or not str(url).strip():
+        return ""
+    u = str(url).strip()
+    if u.startswith("postgres://"):
+        u = "postgresql://" + u[len("postgres://"):]
+    if "neon.tech" in u and "sslmode=" not in u:
+        sep = "&" if "?" in u else "?"
+        u = f"{u}{sep}sslmode=require"
+    return u
+
+
+def get_database_url() -> str:
+    """Retrieve normalized DATABASE_URL from environment."""
+    return normalize_database_url(os.environ.get("DATABASE_URL"))
+
+
 class Config:
     """Application configuration for BharatTrip Refund Intelligence."""
     APP_NAME = os.environ.get("APP_NAME", "BharatTrip Refund Intelligence")
@@ -164,6 +186,13 @@ class Config:
     WTF_CSRF_TIME_LIMIT = 3600
 
     DATABASE = os.environ.get("DATABASE", "bharattrip.db")
+    DATABASE_URL = get_database_url()
+
+    @classmethod
+    def load_database_url(cls) -> str:
+        """Retrieve the normalized DATABASE_URL."""
+        return get_database_url()
+
     DEBUG = parse_bool(os.environ.get("FLASK_DEBUG"), default=False)
     HOST = os.environ.get("FLASK_RUN_HOST", "0.0.0.0" if os.environ.get("RENDER") else "127.0.0.1")
     PORT = int(os.environ.get("PORT", os.environ.get("FLASK_RUN_PORT", 5000)))

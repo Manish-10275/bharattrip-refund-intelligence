@@ -2,11 +2,12 @@ import hashlib
 import logging
 import os
 import re
-import sqlite3
 import warnings
 from typing import Any, Dict, List, Optional
 import openpyxl
 import pandas as pd
+
+from db import DatabaseConnection, get_connection as db_get_connection, init_all_schemas
 
 logger = logging.getLogger(__name__)
 
@@ -86,120 +87,22 @@ class DataService:
     Optimized for memory efficiency, data integrity, and reproducible imports.
     """
 
-    def __init__(self, db_path: str = "bharattrip.db"):
+    def __init__(self, db_path: Optional[str] = None, database_url: Optional[str] = None):
         self.db_path = db_path
+        self.database_url = database_url
 
-    def get_connection(self) -> sqlite3.Connection:
-        """Create a connection to the SQLite database."""
-        db_dir = os.path.dirname(os.path.abspath(self.db_path))
-        if db_dir and not os.path.exists(db_dir):
-            os.makedirs(db_dir, exist_ok=True)
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+    def get_connection(self) -> DatabaseConnection:
+        """Create a connection to the database (PostgreSQL if configured, else SQLite)."""
+        return db_get_connection(db_path=self.db_path, database_url=self.database_url)
 
-    def init_schema(self, conn: Optional[sqlite3.Connection] = None) -> None:
+    def init_schema(self, conn: Optional[DatabaseConnection] = None) -> None:
         """Create required tables for data ingestion if they do not exist."""
         close_needed = False
         if conn is None:
             conn = self.get_connection()
             close_needed = True
-
         try:
-            with conn:
-                # 1. Import history tracking table
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS import_history (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        file_name TEXT NOT NULL,
-                        file_path TEXT NOT NULL,
-                        file_hash TEXT NOT NULL UNIQUE,
-                        support_rows INTEGER DEFAULT 0,
-                        finance_rows INTEGER DEFAULT 0,
-                        escalation_rows INTEGER DEFAULT 0,
-                        status TEXT DEFAULT 'COMPLETED',
-                        imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        notes TEXT
-                    )
-                """)
-
-                # 2. Support tracker table
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS support_records (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        import_id INTEGER NOT NULL,
-                        row_index INTEGER NOT NULL,
-                        ticket_id TEXT,
-                        norm_ticket_id TEXT,
-                        agent TEXT,
-                        route TEXT,
-                        refund_amount REAL,
-                        request_date TEXT,
-                        last_updated TEXT,
-                        status TEXT,
-                        handled_by TEXT,
-                        channel TEXT,
-                        notes TEXT,
-                        source_sheet TEXT DEFAULT 'Support_Tracker',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (import_id) REFERENCES import_history(id) ON DELETE CASCADE,
-                        UNIQUE (import_id, row_index)
-                    )
-                """)
-
-                # 3. Finance tracker table
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS finance_records (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        import_id INTEGER NOT NULL,
-                        row_index INTEGER NOT NULL,
-                        ref_no TEXT,
-                        norm_ref_no TEXT,
-                        agent_name TEXT,
-                        sector TEXT,
-                        amount_paid REAL,
-                        deduction REAL,
-                        received_on TEXT,
-                        processed_on TEXT,
-                        payout_status TEXT,
-                        approved_by TEXT,
-                        remarks TEXT,
-                        source_sheet TEXT DEFAULT 'Finance_Tracker',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (import_id) REFERENCES import_history(id) ON DELETE CASCADE,
-                        UNIQUE (import_id, row_index)
-                    )
-                """)
-
-                # 4. Escalations table
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS escalation_records (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        import_id INTEGER NOT NULL,
-                        row_index INTEGER NOT NULL,
-                        escalation_id TEXT,
-                        norm_escalation_id TEXT,
-                        raised_on TEXT,
-                        related_ticket_ref TEXT,
-                        norm_related_ref TEXT,
-                        raised_by TEXT,
-                        agent_team TEXT,
-                        channel TEXT,
-                        complaint TEXT,
-                        status TEXT,
-                        resolved_on TEXT,
-                        days_open INTEGER,
-                        source_sheet TEXT DEFAULT 'Escalations',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (import_id) REFERENCES import_history(id) ON DELETE CASCADE,
-                        UNIQUE (import_id, row_index)
-                    )
-                """)
-
-                # Performance indexes for normalized references
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_support_norm_ticket ON support_records(norm_ticket_id)")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_finance_norm_ref ON finance_records(norm_ref_no)")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_escalation_norm_ref ON escalation_records(norm_related_ref)")
+            init_all_schemas(conn)
         finally:
             if close_needed:
                 conn.close()
@@ -303,10 +206,11 @@ class DataService:
 
             with conn:
                 cursor.execute(
-                    "INSERT INTO import_history (file_name, file_path, file_hash, status) VALUES (?, ?, ?, 'PROCESSING')",
+                    "INSERT INTO import_history (file_name, file_path, file_hash, status) VALUES (?, ?, ?, 'PROCESSING') RETURNING id",
                     (file_name, file_path, file_hash),
                 )
-                import_id = cursor.lastrowid
+                row = cursor.fetchone()
+                import_id = row[0] if row else cursor.lastrowid
 
                 # 1. Ingest Support_Tracker
                 df_support = pd.read_excel(file_path, sheet_name="Support_Tracker", engine="openpyxl")

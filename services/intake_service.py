@@ -1,9 +1,9 @@
 import json
 import logging
 import os
-import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
 
+from db import DatabaseConnection, DatabaseOperationalError, get_connection as db_get_connection, init_all_schemas
 from services.intake_schema import RefundIntakeExtraction
 
 logger = logging.getLogger(__name__)
@@ -21,78 +21,25 @@ class IntakeService:
     def __init__(self, db_path: Optional[str] = None):
         self.db_path = db_path
 
-    def get_connection(self) -> sqlite3.Connection:
-        """Create a new SQLite connection with row_factory enabled."""
-        if not self.db_path:
-            raise ValueError("Database path not configured for IntakeService.")
-        db_dir = os.path.dirname(os.path.abspath(self.db_path))
-        if db_dir and not os.path.exists(db_dir):
-            os.makedirs(db_dir, exist_ok=True)
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+    def get_connection(self) -> DatabaseConnection:
+        """Create a connection to the database (PostgreSQL if configured, else SQLite)."""
+        return db_get_connection(db_path=self.db_path)
 
-    def init_schema(self, conn: Optional[sqlite3.Connection] = None) -> None:
+    def init_schema(self, conn: Optional[DatabaseConnection] = None) -> None:
         """Idempotently initialize the intake_records table and indexes."""
         close_needed = False
         if conn is None:
             conn = self.get_connection()
             close_needed = True
-
         try:
-            with conn:
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS intake_records (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        original_message TEXT NOT NULL,
-                        source_channel TEXT NOT NULL,
-                        customer_name TEXT,
-                        agency_name TEXT,
-                        booking_reference TEXT,
-                        refund_reference TEXT,
-                        route TEXT,
-                        refund_amount REAL,
-                        currency TEXT,
-                        request_date TEXT,
-                        complaint_category TEXT NOT NULL,
-                        missing_information TEXT NOT NULL,
-                        summary TEXT NOT NULL,
-                        confidence REAL NOT NULL,
-                        human_review_required INTEGER NOT NULL DEFAULT 0,
-                        human_review_reason TEXT,
-                        processing_status TEXT NOT NULL DEFAULT 'PENDING_REVIEW',
-                        model_name TEXT NOT NULL,
-                        prompt_version TEXT NOT NULL,
-                        extracted_json TEXT NOT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        reviewed_at TIMESTAMP,
-                        reviewed_by TEXT
-                    )
-                """)
-
-                conn.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_intake_created_at 
-                    ON intake_records(created_at DESC)
-                """)
-                conn.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_intake_review 
-                    ON intake_records(human_review_required, processing_status)
-                """)
-                conn.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_intake_complaint 
-                    ON intake_records(complaint_category)
-                """)
-                conn.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_intake_refund_ref 
-                    ON intake_records(refund_reference)
-                """)
+            init_all_schemas(conn)
         finally:
             if close_needed:
                 conn.close()
 
     def create_record(
         self,
-        conn: sqlite3.Connection,
+        conn: DatabaseConnection,
         original_message: str,
         source_channel: str,
         extraction: RefundIntakeExtraction,
@@ -147,7 +94,7 @@ class IntakeService:
                 model_name,
                 prompt_version,
                 extracted_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
         """, (
             original_message,
             clean_channel,
@@ -170,10 +117,11 @@ class IntakeService:
             prompt_version,
             extracted_json_str
         ))
+        row = cursor.fetchone()
         conn.commit()
-        return cursor.lastrowid
+        return row[0] if row else cursor.lastrowid
 
-    def get_record(self, conn: sqlite3.Connection, record_id: int) -> Optional[Dict[str, Any]]:
+    def get_record(self, conn: DatabaseConnection, record_id: int) -> Optional[Dict[str, Any]]:
         """Fetch a single intake record by ID, deserializing nested JSON fields."""
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM intake_records WHERE id = ?", (record_id,))
@@ -196,7 +144,7 @@ class IntakeService:
 
     def get_review_queue(
         self,
-        conn: sqlite3.Connection,
+        conn: DatabaseConnection,
         category: Optional[str] = None,
         status: Optional[str] = None,
         limit: int = 50,
@@ -268,7 +216,7 @@ class IntakeService:
 
     def mark_as_reviewed(
         self,
-        conn: sqlite3.Connection,
+        conn: DatabaseConnection,
         record_id: int,
         reviewer: str = "Support Operator"
     ) -> bool:
@@ -305,7 +253,7 @@ class IntakeService:
         conn.commit()
         return cursor.rowcount > 0
 
-    def get_stats(self, conn: sqlite3.Connection) -> Dict[str, int]:
+    def get_stats(self, conn: DatabaseConnection) -> Dict[str, int]:
         """Aggregate summary counts of intake records."""
         cursor = conn.cursor()
         stats = {
@@ -326,7 +274,7 @@ class IntakeService:
 
             cursor.execute("SELECT COUNT(*) FROM intake_records WHERE processing_status = 'PROCESSED'")
             stats["auto_processed"] = cursor.fetchone()[0]
-        except sqlite3.OperationalError:
+        except DatabaseOperationalError:
             pass
 
         return stats

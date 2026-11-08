@@ -1,9 +1,10 @@
 import logging
 import os
-import sqlite3
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+
+from db import DatabaseConnection, get_connection as db_get_connection, init_all_schemas
 
 logger = logging.getLogger(__name__)
 
@@ -36,71 +37,22 @@ class ReconciliationService:
     status mismatches, duplicates, orphaned records, and cases requiring human review.
     """
 
-    def __init__(self, db_path: str = "bharattrip.db"):
+    def __init__(self, db_path: Optional[str] = None, database_url: Optional[str] = None):
         self.db_path = db_path
+        self.database_url = database_url
 
-    def get_connection(self) -> sqlite3.Connection:
-        """Create a connection to SQLite with row_factory enabled."""
-        db_dir = os.path.dirname(os.path.abspath(self.db_path))
-        if db_dir and not os.path.exists(db_dir):
-            os.makedirs(db_dir, exist_ok=True)
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+    def get_connection(self) -> DatabaseConnection:
+        """Create a connection to the database (PostgreSQL if configured, else SQLite)."""
+        return db_get_connection(db_path=self.db_path, database_url=self.database_url)
 
-    def init_schema(self, conn: Optional[sqlite3.Connection] = None) -> None:
+    def init_schema(self, conn: Optional[DatabaseConnection] = None) -> None:
         """Initialize reconciliation_runs and reconciliation_results tables."""
         close_needed = False
         if conn is None:
             conn = self.get_connection()
             close_needed = True
-
         try:
-            with conn:
-                # 1. Reconciliation runs ledger
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS reconciliation_runs (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        run_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        total_candidates INTEGER DEFAULT 0,
-                        matched_count INTEGER DEFAULT 0,
-                        status_mismatch_count INTEGER DEFAULT 0,
-                        support_only_count INTEGER DEFAULT 0,
-                        finance_only_count INTEGER DEFAULT 0,
-                        duplicate_reference_count INTEGER DEFAULT 0,
-                        ambiguous_match_count INTEGER DEFAULT 0,
-                        invalid_reference_count INTEGER DEFAULT 0,
-                        review_required_count INTEGER DEFAULT 0,
-                        status TEXT DEFAULT 'COMPLETED',
-                        notes TEXT
-                    )
-                """)
-
-                # 2. Detailed candidate results table
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS reconciliation_results (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        run_id INTEGER NOT NULL,
-                        support_record_id INTEGER,
-                        finance_record_id INTEGER,
-                        original_support_ref TEXT,
-                        original_finance_ref TEXT,
-                        norm_reference TEXT,
-                        classification TEXT NOT NULL,
-                        reason TEXT NOT NULL,
-                        review_required BOOLEAN NOT NULL DEFAULT 0,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (run_id) REFERENCES reconciliation_runs(id) ON DELETE CASCADE,
-                        FOREIGN KEY (support_record_id) REFERENCES support_records(id),
-                        FOREIGN KEY (finance_record_id) REFERENCES finance_records(id)
-                    )
-                """)
-
-                # Indexes for filtering and fast queries
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_run_id ON reconciliation_results(run_id)")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_classification ON reconciliation_results(classification)")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_review_required ON reconciliation_results(review_required)")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_norm_ref ON reconciliation_results(norm_reference)")
+            init_all_schemas(conn)
         finally:
             if close_needed:
                 conn.close()
@@ -119,10 +71,11 @@ class ReconciliationService:
             # Start a new reconciliation run entry
             with conn:
                 cursor.execute(
-                    "INSERT INTO reconciliation_runs (status, notes) VALUES ('RUNNING', ?)",
+                    "INSERT INTO reconciliation_runs (status, notes) VALUES ('RUNNING', ?) RETURNING id",
                     (notes or "Full deterministic reconciliation run",)
                 )
-                run_id = cursor.lastrowid
+                row = cursor.fetchone()
+                run_id = row[0] if row else cursor.lastrowid
 
             # 1. Fetch all support records
             cursor.execute("""
@@ -481,20 +434,24 @@ class ReconciliationService:
 
             # 5. Persist all reconciliation results in batch
             with conn:
+                normalized_results = [
+                    (r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], bool(r[8]))
+                    for r in results
+                ]
                 conn.executemany("""
                     INSERT INTO reconciliation_results (
                         run_id, support_record_id, finance_record_id,
                         original_support_ref, original_finance_ref, norm_reference,
                         classification, reason, review_required
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, results)
+                """, normalized_results)
 
                 # Compute count metrics
                 counts = defaultdict(int)
                 review_count = 0
                 for r in results:
                     counts[r[6]] += 1
-                    if r[8] == 1:
+                    if r[8]:
                         review_count += 1
 
                 # Update reconciliation_runs ledger
@@ -612,7 +569,7 @@ class ReconciliationService:
 
             if review_required is not None:
                 where_clauses.append("r.review_required = ?")
-                params.append(1 if review_required else 0)
+                params.append(bool(review_required))
 
             if search_query and search_query.strip():
                 q = f"%{search_query.strip()}%"

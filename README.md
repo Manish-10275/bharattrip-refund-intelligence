@@ -1,16 +1,22 @@
 # BharatTrip Refund Intelligence
 
-An operational prototype and triage system designed for B2B flight refund management, deterministic cross-departmental reconciliation, dispute tracking, and structured customer message intake.
+An enterprise operational prototype and triage platform designed for B2B flight refund management, deterministic cross-departmental reconciliation, dispute tracking, and structured customer message intake.
+
+[![Python Tests](https://img.shields.io/badge/tests-99%20passed-brightgreen.svg)](tests/)
+[![Database](https://img.shields.io/badge/database-Neon%20PostgreSQL%20%7C%20SQLite-blue.svg)](db.py)
+[![Deployment](https://img.shields.io/badge/deployment-Vercel%20Serverless-black.svg)](vercel.json)
 
 ---
 
 ## 1. Project Overview
 
-BharatTrip Refund Intelligence is an operations prototype built to identify and triage cross-departmental discrepancies in flight booking refund workflows. It bridges the gap between customer-facing support tickets, finance payout disbursements, and partner agency dispute escalations by providing:
-- Deterministic, rule-based cross-departmental reconciliation.
-- Automated extraction of unstructured customer communications using Groq AI with strict JSON schema validation.
-- Human-in-the-loop review workflows with financial guardrails.
-- Read-only operational ledgers with search, filtering, and pagination.
+BharatTrip Refund Intelligence is an operations platform built to identify and triage cross-departmental discrepancies in flight booking refund workflows. It bridges the gap between customer-facing support tickets, finance payout disbursements, and partner agency dispute escalations by providing:
+- **Centralized Database Layer:** Native support for **Neon Serverless PostgreSQL** in production and **SQLite 3** for local development and offline unit testing.
+- **Serverless Production Architecture:** Optimized for zero-configuration deployment on **Vercel** with CDN edge static delivery and pooled database connections.
+- **Deterministic Reconciliation Engine:** Rule-based cross-departmental reconciliation evaluating 789 operational units across 7 mutually exclusive classifications.
+- **Defensive Groq AI Intake:** Automated structured extraction of unstructured customer communications using Groq AI (`openai/gpt-oss-20b`) with strict JSON schema validation.
+- **Human-in-the-Loop Review:** Operational oversight workflows with financial guardrails preventing automated leakage.
+- **Read-Only Operational Ledgers:** High-contrast, light-theme enterprise interface featuring search, filtering, and pagination.
 
 ---
 
@@ -26,19 +32,25 @@ Online travel agencies (OTAs) and flight booking consolidators face operational 
 
 ## 3. Proposed Operational Solution
 
-BharatTrip Refund Intelligence provides an integrated three-layer operational system:
+BharatTrip Refund Intelligence provides an integrated four-layer operational system:
 
-1. **Ingestion & Data Sanitization Layer:**
+1. **Central Database Layer (`db.py`):**
+   - Universal database adapter supporting **Neon PostgreSQL** via `psycopg 3` and **SQLite 3** via Python stdlib.
+   - Transparent SQL parameter translation (`?` to `%s`) preserving single-quoted literals.
+   - Dual-access case-insensitive `RowWrapper` (`row["col"]` and `row[0]`).
+   - Request-scoped connection lifecycle management (`get_db()` / `close_db()`) preventing serverless pool exhaustion.
+
+2. **Ingestion & Data Sanitization Layer:**
    - Cryptographic SHA-256 ingestion hashing to enforce idempotency.
    - Regex-based canonicalization of reference numbers (`RF-<digits>`) while preserving original raw strings verbatim.
    - Strict `NULL` discipline for missing values, eliminating SQL aggregation errors caused by sentinel strings (`'nan'`, `'None'`).
 
-2. **Deterministic Reconciliation Engine:**
+3. **Deterministic Reconciliation Engine:**
    - Evaluates normalized candidate pairings between Support and Finance into seven mutually exclusive, deterministic classifications.
    - Separates Support `Closed` / Finance `Refund Done` payout agreements (544 cases) from agreed non-payouts (27 `Not Eligible` / `Declined` cases).
    - Surfaces status mismatches, duplicate claims, and ambiguous sector/route conflicts directly into a human review queue.
 
-3. **Defensive AI Intake & Human Review Subsystem:**
+4. **Defensive AI Intake & Human Review Subsystem:**
    - Employs Groq AI (`openai/gpt-oss-20b`) with strict JSON schema validation to convert unstructured inquiries into typed records.
    - Treats customer text strictly as untrusted input, neutralizing prompt injection attempts.
    - Enforces strict null handling (prohibiting fabricated extraction of unmentioned PNRs, dates, or amounts) and explicit currency discipline (never defaulting to INR without explicit symbols/codes).
@@ -71,29 +83,40 @@ BharatTrip Refund Intelligence provides an integrated three-layer operational sy
              |                     +--------------------------------+
              v                                     |
 +-------------------------------------------------------------------+
-|               SQLite Core Database (refund_intelligence.db)       |
-|  - import_history       - reconciliation_runs   - intake_records  |
-|  - support_records      - reconciliation_results                  |
-|  - finance_records      - escalation_records                      |
+|               Central Database Abstraction Layer (db.py)           |
+|   - Transparent Query Parameter Translation (? -> %s)             |
+|   - Dual-Access Case-Insensitive RowWrapper (row["col"] & row[0]) |
+|   - Request-Scoped Connection Lifecycle (get_db / close_db)       |
+|   - Dialect-Aware DDL (PostgreSQL Identity vs SQLite Autoinc)     |
 +-------------------------------------------------------------------+
-                                   |
-                                   v
+             |                                     |
+             v (Production)                        v (Local / Test)
++--------------------------+       +--------------------------------+
+|   Neon PostgreSQL (v16+) |       |       SQLite 3 Database        |
+|  - Serverless Pooler     |       |  - Local developer speed       |
+|  - sslmode=require       |       |  - Offline automated tests     |
++--------------------------+       +--------------------------------+
+             |                                     |
+             +------------------+------------------+
+                                |
+                                v
              +-------------------------------------------+
              |    Deterministic Reconciliation Engine    |
              |    - 7 Mutually Exclusive Outcomes        |
              |    - Payout vs Non-Payout Corroboration   |
              |    - Ambiguity & Dispute Detection        |
              +-------------------------------------------+
-                                   |
-                                   v
+                                |
+                                v
              +-------------------------------------------+
-             |         Web Operations Interface          |
+             |      Vercel Serverless Web Interface      |
              |  - Operations Dashboard (/)               |
              |  - Dispute Escalations (/escalations)     |
              |  - Reconciliation Ledger (/reconciliation)|
              |  - Correlated Refund Records (/refund-records)
              |  - Operations Assistant (/assistant)      |
              |  - Session Auth & CSRF Protection         |
+             |  - Edge Static Asset Serving (/static)    |
              +-------------------------------------------+
 ```
 
@@ -101,15 +124,17 @@ BharatTrip Refund Intelligence provides an integrated three-layer operational sy
 
 ## 5. Technology Stack
 
-- **Runtime:** Python 3.14 (tested runtime; compatible with Python 3.10–3.14 supported by package dependencies)
-- **Web Framework:** Flask 3.1 (WSGI application)
-- **WSGI Production Server:** Gunicorn 21+ (multi-worker UNIX HTTP server)
-- **Session Security & Forms:** Flask-WTF 1.2+ (CSRF protection, secure cookie handling)
-- **Relational Storage:** SQLite 3 (Python native `sqlite3` driver with configurable persistent disk path)
+- **Runtime:** Python 3.12+ (compatible with Python 3.10–3.14)
+- **Web Framework:** Flask 3.1 (WSGI serverless and standard web application)
+- **Primary Production Database:** **Neon PostgreSQL** via `psycopg 3` (`psycopg[binary]>=3.1.0`) with PgBouncer connection pooling and SSL enforcement (`sslmode=require`)
+- **Local / Test Database:** SQLite 3 (standard library `sqlite3` driver)
+- **Serverless Hosting:** **Vercel** (`vercel.json` native Python WSGI runtime with Edge static routing)
+- **Fallback WSGI Server:** Gunicorn 21+ (`gunicorn --bind 0.0.0.0:$PORT app:app` via `Procfile` / `render.yaml`)
+- **Session Security & Forms:** Flask-WTF 1.2+ (CSRF protection, secure HTTP-only cookies)
 - **Data Ingestion & Cleansing:** Pandas 2.0+ & OpenPyXL 3.1+
 - **Data Validation & Typing:** Pydantic 2.0+
 - **AI Model & Inference:** Groq Python SDK (`openai/gpt-oss-20b`)
-- **Testing Framework:** Python standard library `unittest` (89 automated tests)
+- **Testing Framework:** Python standard library `unittest` (99 automated tests, including live PostgreSQL integration verification)
 
 ---
 
@@ -161,14 +186,24 @@ To prevent automated financial leakage, the system implements three foundational
 
 ```text
 bharattrip-refund-intelligence/
-├── README.md                      # Platform documentation & operational guide
-├── render.yaml                    # Render Blueprint deployment specification
-├── Procfile                       # Gunicorn web process definition
+├── README.md                      # Platform documentation & deployment guide
+├── vercel.json                    # Vercel serverless routing & edge configuration
+├── .vercelignore                  # Serverless deployment exclusions
+├── Procfile                       # Gunicorn fallback web process definition
+├── render.yaml                    # Alternative Render Blueprint specification
 ├── .gitignore                     # Git exclusion rules
-├── .env.example                   # Environment variable template
-├── requirements.txt               # Python package dependencies
+├── .env.example                   # Environment variable template (PostgreSQL & SQLite)
+├── requirements.txt               # Python package dependencies (including psycopg[binary])
 ├── app.py                         # Flask application & route controllers
 ├── config.py                      # Application settings & security configuration
+├── db.py                          # Central database abstraction layer
+│
+├── public/                        # Edge-cached static assets for Vercel
+│   └── static/
+│       └── style.css              # Direct CDN stylesheet delivery
+│
+├── scripts/                       # Operational management scripts
+│   └── seed_database.py           # CLI database seeding & reconciliation runner
 │
 ├── services/                      # Core business logic services
 │   ├── __init__.py
@@ -193,12 +228,13 @@ bharattrip-refund-intelligence/
 ├── static/
 │   └── style.css                  # Light-theme enterprise CSS
 │
-├── tests/                         # Automated unit & integration tests (89 tests)
+├── tests/                         # Automated test suite (99 tests)
 │   ├── __init__.py
 │   ├── test_data_service.py       # Ingestion & normalization tests (7 tests)
 │   ├── test_groq_service.py       # Groq extraction & safety tests (15 tests)
 │   ├── test_intake_routes.py      # Route authentication & CSRF tests (23 tests)
 │   ├── test_navigation_and_pages.py # Navigation & read-only tests (19 tests)
+│   ├── test_postgresql_layer.py   # PostgreSQL live integration tests (10 tests)
 │   ├── test_reconciliation_service.py # Reconciliation state tests (10 tests)
 │   └── test_security_and_metrics.py # Security & metric isolation tests (15 tests)
 │
@@ -214,9 +250,9 @@ bharattrip-refund-intelligence/
 
 ---
 
-## 10. Installation & Quick Start
+## 10. Local Installation & Quick Start
 
-### Step 1: Clone the Repository & Set Up Virtual Environment
+### Step 1: Clone Repository & Create Virtual Environment
 
 ```bash
 git clone https://github.com/Manish-10275/bharattrip-refund-intelligence.git
@@ -239,9 +275,9 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-### Step 3: Configure Environment Variables (`.env`)
+### Step 3: Configure Local Environment (`.env`)
 
-Copy `.env.example` to create your local `.env` configuration file:
+Copy the template to create `.env`:
 
 ```bash
 # Windows:
@@ -253,15 +289,22 @@ cp .env.example .env
 Generate a secure cryptographic `SECRET_KEY` and an operator password hash:
 
 ```bash
-# 1. Generate SECRET_KEY (paste output into .env)
+# 1. Generate SECRET_KEY
 python -c "import secrets; print(secrets.token_hex(32))"
 
-# 2. Generate OPERATOR_PASSWORD_HASH (paste output into .env)
+# 2. Generate OPERATOR_PASSWORD_HASH
 python -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('YourSecurePasswordHere'))"
 ```
 
 Configure your `.env` file:
 ```dotenv
+# To use local SQLite (default for development):
+DATABASE=bharattrip.db
+DATABASE_URL=
+
+# To use local or remote PostgreSQL:
+# DATABASE_URL=postgresql://postgres:postgres@localhost:5432/bharattrip_dev
+
 SECRET_KEY=your_generated_64_character_hex_secret_here
 OPERATOR_USERNAME=operator
 OPERATOR_PASSWORD_HASH=your_generated_werkzeug_scrypt_password_hash_here
@@ -273,43 +316,52 @@ GROQ_MODEL=openai/gpt-oss-20b
 GROQ_REQUEST_TIMEOUT=30.0
 ```
 
-> [!NOTE]
-> `GROQ_API_KEY` is optional for running automated tests. If omitted, the test suite executes using offline mock fixtures. An active Groq API key is only required for live intake extraction.
+---
+
+## 11. Database Seeding & Reconciliation Runner
+
+BharatTrip includes a unified seeding utility (`scripts/seed_database.py`) that initializes schemas, ingests the operational workbook, and executes deterministic reconciliation in a single command across either database engine:
+
+```bash
+# Seed local SQLite database (uses DATABASE or .env):
+python scripts/seed_database.py
+
+# Seed explicit PostgreSQL database (e.g. Neon):
+python scripts/seed_database.py --database-url "postgresql://user:pass@ep-xyz-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require"
+```
+
+### Expected Seeding Output:
+```text
+==================================================
+BharatTrip Refund Intelligence - Database Seeding
+Target Backend : PostgreSQL (Neon)
+Workbook File  : BharatTrip_Refund_Data.xlsx
+==================================================
+
+[1/3] Initializing database schemas...
+  [OK] All 8 tables and indexes verified successfully.
+
+[2/3] Ingesting operational dataset from Excel...
+  Import Status : SUCCESS
+  Support Rows  : 755
+  Finance Rows  : 689
+  Escalations   : 155
+
+[3/3] Running automated 3-way reconciliation...
+  Reconciliation Status  : SUCCESS
+  Total Evaluation Units : 789
+  Deterministic Matched  : 571
+  Status Mismatches      : 65
+  Review Required        : 218
+
+==================================================
+Database seeding completed successfully!
+==================================================
+```
 
 ---
 
-## 11. Database Initialisation & Dataset Import
-
-### Step 4: Initialize the SQLite Schema
-
-```bash
-python -c "import app; app.app.app_context().push(); app.init_db(); print('Database initialized successfully.')"
-```
-
-### Step 5: Ingest Operational Workbook
-
-> [!IMPORTANT]
-> **Dataset Availability Notice:**  
-> The original operational dataset (`BharatTrip_Refund_Data.xlsx`) is an internal business document containing operational flight booking records and is **not included in this public repository** to protect operational privacy.  
-> Users wishing to run the full historical analysis must provide an authorized copy of the Excel workbook placed in the project root directory.
-
-Once the authorized workbook (`BharatTrip_Refund_Data.xlsx`) is placed in the project root:
-
-```bash
-python -c "from services.data_service import DataService; result = DataService().import_workbook('BharatTrip_Refund_Data.xlsx'); print(result)"
-```
-*Expected Ingestion Outcome:* 755 Support records, 689 Finance records, and 155 Escalation records imported under `import_id = 1`.
-
-### Step 6: Execute Deterministic Reconciliation
-
-```bash
-python -c "from services.reconciliation_service import ReconciliationService; result = ReconciliationService().run_reconciliation(); print(result)"
-```
-*Expected Reconciliation Outcome:* Exactly 789 evaluation units processed (571 MATCHED, 65 STATUS_MISMATCH, 66 SUPPORT_ONLY, 16 FINANCE_ONLY, 44 DUPLICATE_REFERENCE, 27 AMBIGUOUS_MATCH).
-
----
-
-## 12. Application Startup
+## 12. Local Application Startup
 
 Start the local Flask development server:
 
@@ -321,10 +373,10 @@ Open your browser and navigate to:
 ```
 http://127.0.0.1:5000/login
 ```
-Sign in with the `OPERATOR_USERNAME` and the plaintext password configured during Step 3.
+Sign in using `OPERATOR_USERNAME` and the plaintext password configured in `.env`.
 
-### Documented Flask Routes:
-- `/` — Main operations dashboard, pending triage KPIs, and records ledger overview.
+### Core Application Routes:
+- `/` — Operations dashboard, pending triage KPIs, and records ledger overview.
 - `/reconciliation` — Deterministic reconciliation ledger and candidate review queue.
 - `/reconciliation/run` — On-demand deterministic reconciliation trigger (`POST`, CSRF-protected).
 - `/escalations` — Partner agency dispute escalations with resolution filters, search, and pagination.
@@ -336,19 +388,20 @@ Sign in with the `OPERATOR_USERNAME` and the plaintext password configured durin
 - `/intake/review` — Human oversight queue for triaging and processing pending AI intake records.
 - `/login` — Operator authentication interface (`GET`/`POST`).
 - `/logout` — Secure operator session termination (`POST`, CSRF-protected).
-- `/health` — Public health check endpoint returning JSON runtime status.
+- `/health` — Public health check endpoint returning runtime backend status (`python-flask-postgresql` or `python-flask-sqlite`).
 
 ---
 
 ## 13. Running Automated Tests
 
-The automated test suite contains 89 tests across 6 modules, requiring zero external network connectivity:
+The test suite contains **99 automated tests** across 7 test modules:
 
 ```bash
 python -m unittest discover tests -v
 ```
 
 ### Test Suite Structure:
+- `tests/test_postgresql_layer.py` (10 tests) — Live PostgreSQL verification: identity columns, query translation (`?` -> `%s`), `INSERT ... RETURNING id`, dual-access `RowWrapper`, transaction rollback/commit, foreign key cascades, data service, and reconciliation.
 - `tests/test_data_service.py` (7 tests) — Ingestion provenance, reference regex normalization, idempotency hashing.
 - `tests/test_groq_service.py` (15 tests) — Strict schema constraints, prompt injection neutralization, error sanitization, currency discipline.
 - `tests/test_intake_routes.py` (23 tests) — Session authentication, login/logout redirects, CSRF enforcement, review queue transitions.
@@ -358,75 +411,76 @@ python -m unittest discover tests -v
 
 ---
 
-## 14. Production Deployment on Render
+## 14. Primary Production Deployment: Vercel + Neon PostgreSQL
 
-The repository includes a ready-to-use Render Blueprint (`render.yaml`) and Gunicorn WSGI configuration (`Procfile`).
+The recommended production deployment utilizes **Vercel** for serverless application hosting and **Neon** for managed serverless PostgreSQL.
 
-### 14.1 Render Blueprint Deployment (Recommended)
+### Step 1: Provision Neon PostgreSQL Database
 
-1. Connect your GitHub repository to [Render](https://render.com/).
-2. Select **Blueprints** -> **New Blueprint Instance**.
-3. Select `bharattrip-refund-intelligence`.
-4. Render automatically parses `render.yaml` and configures:
-   - **Service Name:** `bharattrip-refund-intelligence`
-   - **Environment:** `python`
-   - **Build Command:** `pip install -r requirements.txt`
-   - **Start Command:** `gunicorn --bind 0.0.0.0:$PORT app:app`
-   - **Health Check Path:** `/health`
-   - **Persistent Disk:** Mounted at `/var/data` (1 GB)
-5. Configure the required secret environment variables in the Render Dashboard:
-   - `OPERATOR_USERNAME`: Your designated operator login username (e.g. `admin_ops`).
-   - `OPERATOR_PASSWORD_HASH`: Werkzeug scrypt hash generated with:
-     ```bash
-     python -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('YourSecurePasswordHere'))"
+1. Sign up or log in to [Neon Console](https://console.neon.tech/).
+2. Create a new project (e.g. `bharattrip-production`).
+3. Under **Dashboard**, locate your connection details:
+   - Select **Connection pooling** (PgBouncer). *Connection pooling is critical for serverless environments to prevent connection starvation during sudden traffic spikes.*
+   - Copy the pooled connection string. It will look like:
      ```
-   - `GROQ_API_KEY`: (Optional) Your Groq API key for live AI customer inquiry intake.
-6. Deploy the service. Render will automatically provision a random `SECRET_KEY`, mount the persistent disk at `/var/data`, and initialize the SQLite database at `/var/data/bharattrip.db`.
+     postgresql://user:password@ep-cool-xyz-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require
+     ```
+   - Ensure `sslmode=require` is present (the database layer enforces SSL automatically for Neon endpoints).
 
-### 14.2 Manual Render Web Service Setup
+### Step 2: Seed the Neon Database
 
-If configuring manually without Blueprints:
-| Configuration Field | Recommended Production Value |
-| :--- | :--- |
-| **Runtime** | `Python` |
-| **Build Command** | `pip install -r requirements.txt` |
-| **Start Command** | `gunicorn --bind 0.0.0.0:$PORT app:app` |
-| **Health Check Path** | `/health` |
-| **Disk Name** | `bharattrip-data` |
-| **Mount Path** | `/var/data` |
-| **Disk Size** | `1 GB` |
+Run the seeding script from your development terminal or CI pipeline to initialize schemas, ingest historical data, and run baseline reconciliation:
 
-#### Required Environment Variables:
-```dotenv
-DATABASE=/var/data/bharattrip.db
-SECRET_KEY=<generate-via-python-secrets>
-OPERATOR_USERNAME=<your-operator-username>
-OPERATOR_PASSWORD_HASH=<generate-via-werkzeug-hash>
-SESSION_COOKIE_SECURE=true
-WTF_CSRF_ENABLED=true
-GROQ_API_KEY=<your-groq-api-key>
-GROQ_MODEL=openai/gpt-oss-20b
-GROQ_REQUEST_TIMEOUT=30.0
+```bash
+python scripts/seed_database.py --database-url "postgresql://user:password@ep-cool-xyz-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require"
 ```
 
-### 14.3 Persistent Disk & Initial Data Loading
+### Step 3: Deploy to Vercel
 
-Because SQLite data is stored on the persistent disk mounted at `/var/data`, tables are initialized automatically upon first application start. To import operational historical data on Render:
-1. Open the Render Web Shell for the deployed service.
-2. If the operational workbook is uploaded or transferred:
-   ```bash
-   python -c "from services.data_service import DataService; print(DataService().import_workbook('BharatTrip_Refund_Data.xlsx'))"
-   python -c "from services.reconciliation_service import ReconciliationService; print(ReconciliationService().run_reconciliation())"
+1. Push your repository to GitHub.
+2. In the [Vercel Dashboard](https://vercel.com/dashboard), click **Add New Project** and select `bharattrip-refund-intelligence`.
+3. Vercel automatically detects the Python project and uses `vercel.json`.
+4. Under **Settings -> Environment Variables**, configure the production environment variables:
+
+| Variable Name | Value / Description | Required |
+| :--- | :--- | :--- |
+| `DATABASE_URL` | Neon pooled connection string (`sslmode=require`) | **Yes** |
+| `SECRET_KEY` | 64-character cryptographic hex key | **Yes** |
+| `OPERATOR_USERNAME` | Production operator username (e.g. `lead_ops`) | **Yes** |
+| `OPERATOR_PASSWORD_HASH` | Werkzeug scrypt hash of operator password | **Yes** |
+| `SESSION_COOKIE_SECURE` | `True` (enforces HTTPS on Vercel) | **Yes** |
+| `WTF_CSRF_ENABLED` | `True` | **Yes** |
+| `FLASK_ENV` | `production` | **Yes** |
+| `GROQ_API_KEY` | Groq Cloud API key for live AI intake | Optional |
+| `GROQ_MODEL` | `openai/gpt-oss-20b` | Optional |
+
+5. Click **Deploy**.
+
+### Step 4: Verify Deployment
+
+1. Visit `https://<your-vercel-domain>.vercel.app/health`:
+   ```json
+   {
+     "status": "healthy",
+     "database": "connected",
+     "runtime": "python-flask-postgresql"
+   }
    ```
-3. All ingested records and reconciliation runs remain persisted on `/var/data/bharattrip.db` across future code updates, container deploys, and restarts.
+2. Navigate to `https://<your-vercel-domain>.vercel.app/login` and log in with your operator credentials.
+3. Verify that the Operations Dashboard displays the live operational KPIs:
+   - **Pending Support Triage:** 35
+   - **Open Escalation Records:** 85
+   - **Support Tickets Marked Escalated:** 17
 
 ---
 
-## 15. Known Prototype Limitations
+## 15. Alternative Single-Node Deployment: Render
 
-1. **Local SQLite Architecture:** This prototype uses a local SQLite database suitable for single-node evaluation and testing. Multi-node horizontal scaling requires migrating to a hosted relational database (e.g. PostgreSQL) with connection pooling.
-2. **Synchronous LLM Inference:** Inbound AI intake runs synchronously within the HTTP request cycle with a 30-second timeout. High-throughput environments require an asynchronous background task worker (e.g. Celery / Redis Queue).
-3. **Absence of Banking Rail Integration:** The platform reconciles recorded ledger entries; it does not directly dispatch automated payment orders to banking APIs (e.g. UPI, NEFT, IMPS rails).
+For single-instance evaluations requiring a local disk, the repository retains `render.yaml` and `Procfile`:
+
+1. In Render, select **New Blueprint Instance** and select the repository.
+2. Render mounts a persistent disk at `/var/data` and configures `DATABASE=/var/data/bharattrip.db`.
+3. Set `OPERATOR_USERNAME`, `OPERATOR_PASSWORD_HASH`, and `SECRET_KEY` in the Render dashboard.
 
 ---
 
